@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="ko">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>멀티 사격 게임</title>
+    <link rel="stylesheet" href="./Assets/Style_Maro.css">
+    <script type="module" src="./Source/Web_Maro.js"></script>
+</head>
+<body>
+    <main>
+        <section id="setup">
+            <h1>멀티 사격 게임</h1>
+            <div class="setup-grid">
+                <section class="surface settings">
+                    <h2>경기 설정</h2>
+                    <div class="setting-line">
+                        <span>기본 구성</span>
+                        <div id="presets" class="options"></div>
+                    </div>
+                    <div class="setting-line">
+                        <span>팀 수</span>
+                        <div id="team-count" class="options"></div>
+                    </div>
+                    <div id="team-sizes" class="team-sizes"></div>
+                    <div class="actions host-actions">
+                        <strong id="format"></strong>
+                        <button id="host" class="primary" type="button">방 만들기</button>
+                    </div>
+                </section>
+                <div class="side">
+                    <section class="surface settings">
+                        <h2>조작 설정</h2>
+                        <div id="controls" class="options" aria-label="조작 방식">
+                            <button type="button" data-controls="wasd">WASD</button>
+                            <button type="button" data-controls="moba">MOBA</button>
+                        </div>
+                        <dl id="bindings"></dl>
+                    </section>
+                    <section class="surface settings">
+                        <h2>방 참가</h2>
+                        <form id="join-form">
+                            <label for="join-code">방 코드</label>
+                            <div class="actions">
+                                <input id="join-code" name="code" required maxlength="14" autocomplete="off" autocapitalize="characters" spellcheck="false">
+                                <button type="submit">참가</button>
+                            </div>
+                        </form>
+                    </section>
+                </div>
+            </div>
+            <p id="setup-error" class="error" role="alert" hidden></p>
+        </section>
+
+        <section id="lobby" hidden>
+            <header class="section-header">
+                <h1>경기 대기실</h1>
+                <button id="lobby-leave" type="button">나가기</button>
+            </header>
+            <div class="surface room-bar">
+                <div class="room-code-box">
+                    <span>방 코드</span>
+                    <output id="room-code"></output>
+                </div>
+                <button id="copy-room" type="button" hidden>코드 복사</button>
+            </div>
+            <div id="lobby-teams" class="lobby-grid"></div>
+            <div class="surface room-bar">
+                <div>
+                    <strong id="room-count"></strong>
+                    <p id="room-status" class="muted" role="status"></p>
+                </div>
+                <button id="start" class="primary" type="button" disabled>경기 시작</button>
+            </div>
+        </section>
+
+        <section id="game" hidden>
+            <header class="game-header">
+                <div class="match-details">
+                    <strong id="match-format"></strong>
+                    <span id="my-team" class="muted"></span>
+                </div>
+                <div class="game-score">
+                    <time id="clock">00:00</time>
+                    <div id="game-teams"></div>
+                </div>
+                <button id="game-leave" type="button">나가기</button>
+            </header>
+            <div id="arena-frame">
+                <canvas id="arena" width="1080" height="560" aria-label="전투 화면"></canvas>
+                <div id="battle-overlay" class="battle-overlay" hidden>
+                    <section id="augment-dialog" class="surface battle-dialog" role="dialog" aria-modal="true" aria-labelledby="augment-title" hidden>
+                        <span id="augment-level" class="accent"></span>
+                        <h2 id="augment-title">증강 선택</h2>
+                        <div id="augment-options"></div>
+                    </section>
+                    <section id="message-dialog" class="surface battle-dialog message-dialog" role="dialog" aria-modal="true" aria-labelledby="message-title" hidden>
+                        <h2 id="message-title"></h2>
+                        <p id="message-body" class="muted"></p>
+                        <button id="message-leave" class="primary" type="button" hidden>설정으로</button>
+                    </section>
+                </div>
+            </div>
+            <div class="game-hud">
+                <div class="meter">
+                    <div><span>체력</span><strong id="health-text">100 / 100</strong></div>
+                    <progress id="health" max="100" value="100" aria-label="체력"></progress>
+                </div>
+                <div class="meter">
+                    <div><strong id="level">레벨 1 / 6</strong><span id="level-text"></span></div>
+                    <progress id="level-progress" max="1" value="0" aria-label="다음 레벨까지 진행률"></progress>
+                </div>
+                <strong id="kills">처치 0</strong>
+            </div>
+            <p id="game-controls" class="muted game-controls"></p>
+        </section>
+    </main>
+</body>
+</html>
