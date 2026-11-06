@@ -163,6 +163,14 @@ void maro::setGameFullscreen(bool fullscreen) {
 
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 {
-    MaroApplication app;
-    return app.run();
+    const HRESULT com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    int result = 0;
+    {
+        MaroApplication app;
+        result = app.run();
+    }
+    if (SUCCEEDED(com)) {
+        CoUninitialize();
+    }
+    return result;
 }
