@@ -798,11 +798,8 @@ void BattleScene::showSettings() {
         onMain = [this] { openMainMenu(); };
     }
     overlayNode_ = createSettingsOverlay(settings_, [this](const Settings& settings) {
-        const bool fullscreenChanged = settings_.fullscreen != settings.fullscreen;
         settings_ = settings;
-        if (fullscreenChanged) {
-            setGameFullscreen(settings_.fullscreen);
-        }
+        applyDisplaySettings(settings_);
     }, [this] { setPaused(false); }, [] {
         cocos2d::Director::getInstance()->replaceScene(createMenuScene());
     }, session_->hosting() ? "경기 종료" : "경기 나가기", std::move(onMain));

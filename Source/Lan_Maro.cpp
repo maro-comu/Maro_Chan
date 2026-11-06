@@ -4,6 +4,7 @@
 #include <mstcpip.h>
 
 #include "Lan_Maro.h"
+#include "Relay_Maro.h"
 
 #include <algorithm>
 #include <chrono>
@@ -455,6 +456,9 @@ struct LanSession::Impl {
 
     Winsock winsock;
     Socket listener;
+    std::shared_ptr<RelayTunnel> tunnel;
+    unsigned short boundPort = 0;
+    bool tunnelConnected = false;
     Peer upstream;
     std::vector<Peer> clients;
     MatchConfig config;
@@ -475,6 +479,7 @@ struct LanSession::Impl {
 
     void pollHost();
     void pollGuest();
+    void connectTo(const std::string& ipv4, unsigned short port);
     void acceptClients();
     void finishConnect();
     void sendHello();
@@ -488,6 +493,10 @@ LanSession::LanSession(bool hosting) : impl_(std::make_unique<Impl>(hosting)) {}
 LanSession::~LanSession() = default;
 
 std::shared_ptr<LanSession> LanSession::host(const MatchConfig& config) {
+    return createHost(config, false);
+}
+
+std::shared_ptr<LanSession> LanSession::createHost(const MatchConfig& config, bool loopbackOnly) {
     auto session = std::shared_ptr<LanSession>(new LanSession(true));
     auto& state = *session->impl_;
     state.config = config;
@@ -501,14 +510,25 @@ std::shared_ptr<LanSession> LanSession::host(const MatchConfig& config) {
         return session;
     }
     state.listener = Socket(socket(AF_INET, SOCK_STREAM, IPPROTO_TCP));
-    const auto address = endpoint();
+    auto address = endpoint();
+    if (loopbackOnly) {
+        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        address.sin_port = 0;
+    }
     if (!state.listener.open() || !configureSocket(state.listener.get(), true)
         || bind(state.listener.get(), reinterpret_cast<const sockaddr*>(&address), sizeof(address)) != 0
         || listen(state.listener.get(), SOMAXCONN) != 0) {
         state.listener.close();
-        state.error = "48150 포트에서 방을 열 수 없습니다.";
+        state.error = "방 연결을 준비할 수 없습니다.";
         return session;
     }
+    int addressLength = sizeof(address);
+    if (getsockname(state.listener.get(), reinterpret_cast<sockaddr*>(&address), &addressLength) != 0) {
+        state.listener.close();
+        state.error = "방 연결을 준비할 수 없습니다.";
+        return session;
+    }
+    state.boundPort = ntohs(address.sin_port);
     state.slot = 0;
     state.occupied = 1;
     return session;
@@ -521,23 +541,49 @@ std::shared_ptr<LanSession> LanSession::join(const std::string& ipv4) {
         state.error = "Windows 네트워크를 초기화할 수 없습니다.";
         return session;
     }
+    state.connectTo(ipv4, Port);
+    return session;
+}
+
+void LanSession::Impl::connectTo(const std::string& ipv4, unsigned short port) {
+    upstream.joinedAt = Clock::now();
     auto address = endpoint();
+    address.sin_port = htons(port);
     if (InetPtonA(AF_INET, ipv4.c_str(), &address.sin_addr) != 1) {
-        state.error = "올바른 방 코드를 입력하세요.";
-        return session;
+        error = "올바른 방 코드를 입력하세요.";
+        return;
     }
-    auto& socketRef = state.upstream.socket;
+    auto& socketRef = upstream.socket;
     socketRef = Socket(socket(AF_INET, SOCK_STREAM, IPPROTO_TCP));
     if (!socketRef.open() || !configureSocket(socketRef.get())) {
-        state.disconnect("접속을 시작할 수 없습니다.");
-        return session;
+        disconnect("접속을 시작할 수 없습니다.");
+        return;
     }
     if (connect(socketRef.get(), reinterpret_cast<const sockaddr*>(&address), sizeof(address)) == 0) {
-        state.sendHello();
+        sendHello();
     } else if (WSAGetLastError() == WSAEWOULDBLOCK) {
-        state.connecting = true;
+        connecting = true;
     } else {
-        state.disconnect("방에 접속할 수 없습니다.");
+        disconnect("방에 접속할 수 없습니다.");
+    }
+}
+
+std::shared_ptr<LanSession> LanSession::hostOnline(const MatchConfig& config, const std::string& endpoint) {
+    auto session = createHost(config, true);
+    auto& state = *session->impl_;
+    if (state.error.empty()) {
+        state.tunnel = RelayTunnel::host(endpoint, state.boundPort);
+    }
+    return session;
+}
+
+std::shared_ptr<LanSession> LanSession::joinOnline(const std::string& code, const std::string& endpoint) {
+    auto session = std::shared_ptr<LanSession>(new LanSession(false));
+    auto& state = *session->impl_;
+    if (!state.winsock.ready()) {
+        state.error = "Windows 네트워크를 초기화할 수 없습니다.";
+    } else {
+        state.tunnel = RelayTunnel::join(endpoint, code);
     }
     return session;
 }
@@ -805,6 +851,28 @@ void LanSession::Impl::pollGuest() {
 }
 
 void LanSession::poll() {
+    if (!impl_->error.empty()) {
+        return;
+    }
+    if (impl_->tunnel) {
+        const auto error = impl_->tunnel->error();
+        if (!error.empty()) {
+            if (!impl_->hosting && impl_->upstream.socket.open() && !impl_->connecting) {
+                impl_->upstream.read([this](Kind kind, Reader& reader) { return impl_->fromHost(kind, reader); });
+            }
+            impl_->disconnect(impl_->error.empty() ? error : impl_->error);
+            impl_->listener.close();
+            impl_->clients.clear();
+            return;
+        }
+        if (!impl_->tunnel->ready()) {
+            return;
+        }
+        if (!impl_->hosting && !impl_->tunnelConnected) {
+            impl_->tunnelConnected = true;
+            impl_->connectTo("127.0.0.1", impl_->tunnel->localPort());
+        }
+    }
     if (impl_->hosting && impl_->listener.open()) {
         impl_->pollHost();
     } else if (!impl_->hosting && impl_->upstream.socket.open()) {
@@ -815,8 +883,10 @@ void LanSession::poll() {
 bool LanSession::hosting() const { return impl_->hosting; }
 bool LanSession::started() const { return impl_->started; }
 bool LanSession::connected() const {
-    return impl_->slot >= 0 && (hosting() ? impl_->listener.open() : impl_->upstream.socket.open());
+    return impl_->error.empty() && (!impl_->tunnel || impl_->tunnel->ready())
+        && impl_->slot >= 0 && (hosting() ? impl_->listener.open() : impl_->upstream.socket.open());
 }
+std::string LanSession::roomCode() const { return impl_->tunnel ? impl_->tunnel->roomCode() : std::string{}; }
 const std::string& LanSession::error() const { return impl_->error; }
 int LanSession::localSlot() const { return impl_->slot; }
 const MatchConfig& LanSession::config() const { return impl_->config; }

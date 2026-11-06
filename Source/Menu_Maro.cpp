@@ -3,18 +3,16 @@
 #include "Arena_Maro.h"
 #include "Battle_Maro.h"
 #include "Lan_Maro.h"
+#include "RoomCode_Maro.h"
 #include "Settings_Maro.h"
 #include "Ui_Maro.h"
 #include "ui/UIEditBox/UIEditBox.h"
 
 #include <algorithm>
 #include <array>
-#include <cctype>
-#include <cstdint>
-#include <cstdio>
+#include <chrono>
 #include <memory>
 #include <string>
-#include <string_view>
 #include <utility>
 
 namespace maro {
@@ -27,7 +25,6 @@ const Vec2 leftAnchor{0.0f, 0.5f};
 const Vec2 rightAnchor{1.0f, 0.5f};
 constexpr const char* teamCountSetting = "maro.teamCount";
 constexpr const char* roomCodeSetting = "maro.roomCode";
-constexpr std::string_view roomAlphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 constexpr std::array<const char*, 4> teamSizeSettings{{
     "maro.teamSize1", "maro.teamSize2", "maro.teamSize3", "maro.teamSize4"
 }};
@@ -38,38 +35,10 @@ void setText(Label* label, const std::string& text) {
     }
 }
 
-std::string encodeRoomCode(const std::string& address) {
-    unsigned a = 0, b = 0, c = 0, d = 0;
-    if (sscanf_s(address.c_str(), "%u.%u.%u.%u", &a, &b, &c, &d) != 4
-        || std::max({a, b, c, d}) > 255) {
-        return {};
-    }
-    auto value = (std::uint32_t{a} << 24) | (std::uint32_t{b} << 16) | (std::uint32_t{c} << 8) | d;
-    std::string code(7, roomAlphabet.front());
-    for (auto digit = code.rbegin(); digit != code.rend(); ++digit) {
-        *digit = roomAlphabet[value & 31];
-        value >>= 5;
-    }
-    return code;
-}
-
-std::string decodeRoomCode(const std::string& code) {
-    if (code.size() != 7) {
-        return {};
-    }
-    std::uint64_t value = 0;
-    for (const unsigned char digit : code) {
-        const auto index = roomAlphabet.find(static_cast<char>(std::toupper(digit)));
-        if (index == std::string_view::npos) {
-            return {};
-        }
-        value = (value << 5) | index;
-    }
-    if (value > UINT32_MAX) {
-        return {};
-    }
-    return std::to_string(value >> 24) + "." + std::to_string((value >> 16) & 255)
-        + "." + std::to_string((value >> 8) & 255) + "." + std::to_string(value & 255);
+std::string relayEndpoint() {
+    auto endpoint = FileUtils::getInstance()->getStringFromFile("Relay_Maro.cfg");
+    const auto end = endpoint.find_last_not_of(" \r\n\t");
+    return end == std::string::npos ? std::string{} : endpoint.substr(0, end + 1);
 }
 
 class SettingsView : public Node {
@@ -96,7 +65,7 @@ protected:
             return;
         }
         settingsOverlay_ = createSettingsOverlay(loadSettings(),
-            [](const Settings& settings) { setGameFullscreen(settings.fullscreen); },
+            [](const Settings& settings) { applyDisplaySettings(settings); },
             [this] { toggleSettings(); });
         if (settingsOverlay_) {
             addChild(settingsOverlay_, 100);
@@ -126,14 +95,19 @@ private:
         if (!Node::init()) {
             return false;
         }
-        auto* connection = ui::label(this, connectionInfo(), 17, {250, 647}, ui::Muted, leftAnchor);
-        connection->setWidth(982);
+        connection_ = ui::label(this, "서버 연결 중", 19, {250, 647}, ui::Ink, leftAnchor);
+        connection_->setWidth(720);
         buildTeamCards();
 
         ui::panel(this, {48, 46, 1184, 88}, Color4F(ui::Surface), Color4F(ui::Border));
         count_ = ui::label(this, "연결 확인 중", 25, {76, 104}, ui::Ink, leftAnchor);
         status_ = ui::label(this, "", 16, {76, 72}, ui::Muted, leftAnchor);
         auto* buttons = ui::menu(this);
+        copy_ = ui::button(buttons, "코드 복사", {1128, 647}, {208, 38}, [this] {
+            copied_ = copyRoomCode(session_->roomCode());
+            copyUntil_ = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            refresh();
+        }, false, 16);
         ui::button(buttons, "방 나가기", {session_->hosting() ? 905.0f : 1096.0f, 90},
                    {136, 50}, std::move(onLeave));
         if (session_->hosting()) {
@@ -157,21 +131,6 @@ private:
             return;
         }
         refresh();
-    }
-
-    std::string connectionInfo() const {
-        if (!session_->hosting()) {
-            return "방장이 경기를 시작하면 자동으로 입장합니다.";
-        }
-        const auto addresses = LanSession::localAddresses();
-        std::string list;
-        for (const auto& address : addresses) {
-            if (!list.empty()) {
-                list += "  /  ";
-            }
-            list += encodeRoomCode(address);
-        }
-        return "방 코드   " + (list.empty() ? encodeRoomCode("127.0.0.1") : list);
     }
 
     void buildTeamCards() {
@@ -220,6 +179,13 @@ private:
 
     void refresh() {
         const bool connected = session_->connected();
+        const auto code = session_->roomCode();
+        setText(connection_, !session_->error().empty() ? "방 연결 종료"
+            : code.empty() ? "서버 연결 중" : "방 코드   " + code);
+        copy_->setEnabled(connected && !code.empty());
+        ui::setButtonActive(copy_, connected && !code.empty());
+        const bool feedback = std::chrono::steady_clock::now() < copyUntil_;
+        setText(static_cast<Label*>(copy_->getLabel()), feedback ? (copied_ ? "복사 완료" : "복사 재시도") : "코드 복사");
         const int total = refreshTeamCards(connected);
         const int count = session_->connectedPlayers();
         const bool ready = connected && session_->error().empty() && count == total;
@@ -234,9 +200,10 @@ private:
             return;
         }
         setText(count_, connected ? "연결된 인원 " + std::to_string(count) + " / " + std::to_string(total)
-                                  : "연결 확인 중");
+                                  : "서버 연결 중");
         if (session_->hosting()) {
-            setText(status_, ready ? "모든 자리가 찼습니다." : "모든 참가자가 접속하면 경기를 시작할 수 있습니다.");
+            setText(status_, !connected ? "인터넷 방을 준비하고 있습니다. 잠시 기다려 주세요."
+                : ready ? "모든 자리가 찼습니다." : "모든 참가자가 접속하면 경기를 시작할 수 있습니다.");
         } else {
             setText(status_, connected ? "방장의 경기 시작을 기다리는 중입니다." : "방장에게 연결하는 중입니다.");
         }
@@ -247,6 +214,10 @@ private:
     std::array<std::array<Label*, 4>, 4> seats_{};
     Label* count_ = nullptr;
     Label* status_ = nullptr;
+    Label* connection_ = nullptr;
+    MenuItemLabel* copy_ = nullptr;
+    std::chrono::steady_clock::time_point copyUntil_{};
+    bool copied_ = false;
     MenuItemLabel* start_ = nullptr;
 };
 
@@ -350,18 +321,31 @@ private:
         create->setEnabled(!canResume_);
         ui::panel(setupContent_, {796, 437, 408, 1}, Color4F(ui::Border));
         ui::panel(setupContent_, {796, 340, 408, 50}, Color4F(ui::Background), Color4F(ui::Border));
-        address = cocos2d::ui::EditBox::create({392, 46}, "");
-        address->setPosition({1000, 365});
+        address = cocos2d::ui::EditBox::create({294, 46}, "");
+        address->setPosition({951, 365});
         address->setInputMode(cocos2d::ui::EditBox::InputMode::SINGLE_LINE);
         address->setFont("Arial", 19);
         address->setFontColor(ui::Ink);
         address->setPlaceholderFont("Malgun Gothic", 18);
         address->setPlaceholderFontColor(ui::Muted);
         address->setPlaceHolder("방 코드");
-        address->setMaxLength(7);
-        address->setText(UserDefault::getInstance()->getStringForKey(roomCodeSetting).c_str());
+        address->setMaxLength(32);
+        const auto lastCode = normalizeRoomCode(UserDefault::getInstance()->getStringForKey(roomCodeSetting));
+        if (lastCode.size() == 8) {
+            address->setText(lastCode.c_str());
+        }
         address->setEnabled(!canResume_);
         setupContent_->addChild(address);
+        auto* paste = ui::button(buttons, "붙여넣기", {1150, 365}, {96, 36}, [this] {
+            const auto code = clipboardRoomCode();
+            if (code.size() == 8) {
+                address->setText(code.c_str());
+                notice->setString("");
+            } else {
+                notice->setString("복사된 방 코드 8자리를 확인해 주세요.");
+            }
+        }, false, 14);
+        paste->setEnabled(!canResume_);
         auto* joinRoom = ui::button(buttons, "방 참여", {1000, 285}, {408, 50}, [this] { join(); }, false, 22);
         joinRoom->setEnabled(!canResume_);
     }
@@ -398,20 +382,20 @@ private:
         }
         defaults->flush();
         config.controls = loadSettings().controls;
-        openRoom(LanSession::host(config));
+        openRoom(LanSession::hostOnline(config, relayEndpoint()));
     }
 
     void join() {
-        const std::string code = address->getText();
-        const auto ipv4 = decodeRoomCode(code);
-        if (ipv4.empty()) {
-            notice->setString("방 코드 7자리를 확인해 주세요.");
+        const auto code = normalizeRoomCode(address->getText());
+        if (code.size() != 8) {
+            notice->setString("방 코드 8자리를 확인해 주세요.");
             return;
         }
+        address->setText(code.c_str());
         auto* defaults = UserDefault::getInstance();
         defaults->setStringForKey(roomCodeSetting, code);
         defaults->flush();
-        openRoom(LanSession::join(ipv4));
+        openRoom(LanSession::joinOnline(code, relayEndpoint()));
     }
 
     void openRoom(std::shared_ptr<LanSession> session) {

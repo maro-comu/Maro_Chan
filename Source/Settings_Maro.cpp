@@ -19,6 +19,11 @@ constexpr auto EffectsVolumeKey = "maro.effectsVolume";
 constexpr auto ScreenShakeKey = "maro.screenShake";
 constexpr auto ShowFpsKey = "maro.showFps";
 constexpr auto FullscreenKey = "maro.fullscreen";
+constexpr auto WindowSizeKey = "maro.windowSize";
+constexpr auto FrameLimitKey = "maro.frameLimit";
+constexpr auto VSyncKey = "maro.vSync";
+constexpr std::array<const char*, 5> WindowSizes{"960 × 600", "1280 × 800", "1440 × 900", "1600 × 1000", "1920 × 1200"};
+constexpr std::array<int, 3> FrameLimits{60, 120, 144};
 const Vec2 LeftAnchor{0.0f, 0.5f};
 const Vec2 RightAnchor{1.0f, 0.5f};
 
@@ -42,31 +47,32 @@ public:
         onChange_ = std::move(onChange);
 
         ui::panel(this, {0, 0, 1280, 800}, {0.025f, 0.035f, 0.052f, 0.88f});
-        ui::panel(this, {224, 96, 832, 608}, Color4F(ui::Background), Color4F(ui::Border));
-        ui::label(this, "설정", 35, {258, 653}, ui::Ink, LeftAnchor);
-        ui::label(this, "변경 사항 자동 저장", 14, {1020, 649}, ui::Muted, RightAnchor);
-        ui::panel(this, {256, 202, 362, 400}, Color4F(ui::Surface), Color4F(ui::Border));
-        ui::panel(this, {634, 202, 390, 400}, Color4F(ui::Surface), Color4F(ui::Border));
+        ui::panel(this, {104, 64, 1072, 672}, Color4F(ui::Background), Color4F(ui::Border));
+        ui::label(this, "설정", 35, {138, 685}, ui::Ink, LeftAnchor);
+        ui::label(this, "변경 사항 자동 저장", 14, {1142, 681}, ui::Muted, RightAnchor);
+        ui::panel(this, {136, 178, 310, 448}, Color4F(ui::Surface), Color4F(ui::Border));
+        ui::panel(this, {462, 178, 294, 448}, Color4F(ui::Surface), Color4F(ui::Border));
+        ui::panel(this, {772, 178, 372, 448}, Color4F(ui::Surface), Color4F(ui::Border));
 
         auto* buttons = ui::menu(this);
         buttons->setLocalZOrder(1);
         buildControls(buttons);
         buildPreferences(buttons);
-        ui::button(buttons, "기본값 복원", {341, 148}, {170, 42}, [this] {
+        ui::button(buttons, "기본값 복원", {221, 120}, {170, 42}, [this] {
             settings_ = Settings{};
             changed();
         }, false, 16);
         const bool bothActions = onLeave && onMain;
         if (onLeave) {
-            ui::button(buttons, leaveLabel.empty() ? "나가기" : leaveLabel, {bothActions ? 702.0f : 598.0f, 148}, {192, 42},
+            ui::button(buttons, leaveLabel.empty() ? "나가기" : leaveLabel, {bothActions ? 740.0f : 638.0f, 120}, {192, 42},
                 std::move(onLeave), false, 16);
         }
         if (onMain) {
-            ui::button(buttons, "메인으로", {bothActions ? 522.0f : 598.0f, 148}, {142, 42},
+            ui::button(buttons, "메인으로", {bothActions ? 536.0f : 638.0f, 120}, {142, 42},
                 std::move(onMain), false, 16);
         }
         if (onClose) {
-            ui::button(buttons, "계속하기  /  ESC", {920, 148}, {208, 42}, std::move(onClose), true, 16);
+            ui::button(buttons, "계속하기  /  ESC", {1040, 120}, {208, 42}, std::move(onClose), true, 16);
         }
 
         auto* barrier = EventListenerTouchOneByOne::create();
@@ -79,47 +85,71 @@ public:
 
 private:
     void buildControls(Menu* buttons) {
-        ui::label(this, "조작", 22, {278, 566}, ui::Ink, LeftAnchor);
-        wasd_ = ui::button(buttons, "WASD", {352, 517}, {148, 40}, [this] {
+        ui::label(this, "조작", 22, {158, 584}, ui::Ink, LeftAnchor);
+        wasd_ = ui::button(buttons, "WASD", {220, 534}, {124, 40}, [this] {
             selectControls(ControlMode::Wasd);
         }, false, 17);
-        moba_ = ui::button(buttons, "MOBA", {522, 517}, {148, 40}, [this] {
+        moba_ = ui::button(buttons, "MOBA", {362, 534}, {124, 40}, [this] {
             selectControls(ControlMode::Moba);
         }, false, 17);
 
-        ui::panel(this, {278, 478, 318, 1}, Color4F(ui::Border));
+        ui::panel(this, {158, 494, 266, 1}, Color4F(ui::Border));
         constexpr std::array<const char*, 5> actions{"이동", "조준", "사격", "방어", "패링"};
         for (std::size_t row = 0; row < actions.size(); ++row) {
-            const auto y = 447.0f - static_cast<float>(row) * 44.0f;
-            ui::label(this, actions[row], 16, {278, y}, ui::Muted, LeftAnchor);
-            bindings_[row] = ui::label(this, " ", 16, {596, y}, ui::Ink, RightAnchor);
+            const auto y = 455.0f - static_cast<float>(row) * 42.0f;
+            ui::label(this, actions[row], 16, {158, y}, ui::Muted, LeftAnchor);
+            bindings_[row] = ui::label(this, " ", 16, {424, y}, ui::Ink, RightAnchor);
         }
     }
 
     void buildPreferences(Menu* buttons) {
-        ui::label(this, "소리", 22, {656, 566}, ui::Ink, LeftAnchor);
+        ui::label(this, "소리", 22, {484, 584}, ui::Ink, LeftAnchor);
         volumeRow(buttons, "전체 음량", 518, &Settings::masterVolume, masterValue_);
-        volumeRow(buttons, "효과음 음량", 472, &Settings::effectsVolume, effectsValue_);
-        ui::panel(this, {656, 442, 346, 1}, Color4F(ui::Border));
-        ui::label(this, "화면", 22, {656, 417}, ui::Ink, LeftAnchor);
-        shake_ = toggleRow(buttons, "화면 흔들림", 375, &Settings::screenShake);
-        fps_ = toggleRow(buttons, "FPS 표시", 327, &Settings::showFps);
-        fullscreen_ = toggleRow(buttons, "화면 모드", 279, &Settings::fullscreen);
+        volumeRow(buttons, "효과음 음량", 462, &Settings::effectsVolume, effectsValue_);
+        ui::label(this, "화면", 22, {794, 584}, ui::Ink, LeftAnchor);
+        fullscreen_ = toggleRow(buttons, "화면 모드", 534, &Settings::fullscreen);
+        windowSize_ = choiceRow(buttons, "창 크기", 484, [this](int delta) {
+            const int next = std::clamp(settings_.windowSize + delta, 0, 4);
+            if (next != settings_.windowSize) {
+                settings_.windowSize = next;
+                changed();
+            }
+        });
+        frameLimit_ = choiceRow(buttons, "FPS 제한", 434, [this](int delta) {
+            const auto current = std::find(FrameLimits.begin(), FrameLimits.end(), settings_.frameLimit);
+            const int index = current == FrameLimits.end() ? 0 : static_cast<int>(current - FrameLimits.begin());
+            const int next = FrameLimits[std::clamp(index + delta, 0, 2)];
+            if (next != settings_.frameLimit) {
+                settings_.frameLimit = next;
+                changed();
+            }
+        });
+        vSync_ = toggleRow(buttons, "수직 동기화", 384, &Settings::vSync);
+        shake_ = toggleRow(buttons, "화면 흔들림", 334, &Settings::screenShake);
+        fps_ = toggleRow(buttons, "FPS 표시", 284, &Settings::showFps);
     }
 
     void volumeRow(Menu* buttons, const char* title, float y, float Settings::*setting, Label*& value) {
-        ui::label(this, title, 16, {656, y}, ui::Ink, LeftAnchor);
-        value = ui::label(this, " ", 17, {921, y}, ui::Ink);
-        ui::button(buttons, "−", {858, y}, {42, 32}, [this, setting] { adjustVolume(setting, -0.1f); }, false, 19);
-        ui::button(buttons, "+", {980, y}, {42, 32}, [this, setting] { adjustVolume(setting, 0.1f); }, false, 19);
+        ui::label(this, title, 16, {484, y}, ui::Ink, LeftAnchor);
+        value = ui::label(this, " ", 17, {665, y}, ui::Ink);
+        ui::button(buttons, "−", {614, y}, {36, 32}, [this, setting] { adjustVolume(setting, -0.1f); }, false, 19);
+        ui::button(buttons, "+", {716, y}, {36, 32}, [this, setting] { adjustVolume(setting, 0.1f); }, false, 19);
     }
 
     MenuItemLabel* toggleRow(Menu* buttons, const char* title, float y, bool Settings::*setting) {
-        ui::label(this, title, 16, {656, y}, ui::Ink, LeftAnchor);
-        return ui::button(buttons, " ", {943, y}, {116, 34}, [this, setting] {
+        ui::label(this, title, 16, {794, y}, ui::Ink, LeftAnchor);
+        return ui::button(buttons, " ", {1064, y}, {116, 34}, [this, setting] {
             settings_.*setting = !(settings_.*setting);
             changed();
         }, false, 15);
+    }
+
+    Label* choiceRow(Menu* buttons, const char* title, float y, std::function<void(int)> choose) {
+        ui::label(this, title, 16, {794, y}, ui::Ink, LeftAnchor);
+        auto* value = ui::label(this, " ", 15, {1018, y}, ui::Ink);
+        ui::button(buttons, "‹", {930, y}, {32, 34}, [choose] { choose(-1); }, false, 21);
+        ui::button(buttons, "›", {1106, y}, {32, 34}, [choose] { choose(1); }, false, 21);
+        return value;
     }
 
     void selectControls(ControlMode mode) {
@@ -164,6 +194,9 @@ private:
         updateToggle(shake_, settings_.screenShake, "켜기", "끄기");
         updateToggle(fps_, settings_.showFps, "켜기", "끄기");
         updateToggle(fullscreen_, settings_.fullscreen, "전체 화면", "창 모드");
+        updateToggle(vSync_, settings_.vSync, "켜기", "끄기");
+        windowSize_->setString(WindowSizes[settings_.windowSize]);
+        frameLimit_->setString(std::to_string(settings_.frameLimit) + " FPS");
     }
 
     static void updateToggle(MenuItemLabel* button, bool enabled, const char* on, const char* off) {
@@ -178,8 +211,11 @@ private:
     MenuItemLabel* shake_ = nullptr;
     MenuItemLabel* fps_ = nullptr;
     MenuItemLabel* fullscreen_ = nullptr;
+    MenuItemLabel* vSync_ = nullptr;
     Label* masterValue_ = nullptr;
     Label* effectsValue_ = nullptr;
+    Label* windowSize_ = nullptr;
+    Label* frameLimit_ = nullptr;
     std::array<Label*, 5> bindings_{};
 };
 
@@ -194,6 +230,12 @@ Settings loadSettings() {
     settings.screenShake = defaults->getBoolForKey(ScreenShakeKey, settings.screenShake);
     settings.showFps = defaults->getBoolForKey(ShowFpsKey, settings.showFps);
     settings.fullscreen = defaults->getBoolForKey(FullscreenKey, settings.fullscreen);
+    settings.windowSize = std::clamp(defaults->getIntegerForKey(WindowSizeKey, settings.windowSize), 0, 4);
+    settings.frameLimit = defaults->getIntegerForKey(FrameLimitKey, settings.frameLimit);
+    if (std::find(FrameLimits.begin(), FrameLimits.end(), settings.frameLimit) == FrameLimits.end()) {
+        settings.frameLimit = 60;
+    }
+    settings.vSync = defaults->getBoolForKey(VSyncKey, settings.vSync);
     return settings;
 }
 
@@ -206,6 +248,10 @@ void saveSettings(const Settings& settings) {
     defaults->setBoolForKey(ScreenShakeKey, settings.screenShake);
     defaults->setBoolForKey(ShowFpsKey, settings.showFps);
     defaults->setBoolForKey(FullscreenKey, settings.fullscreen);
+    defaults->setIntegerForKey(WindowSizeKey, std::clamp(settings.windowSize, 0, 4));
+    defaults->setIntegerForKey(FrameLimitKey,
+        std::find(FrameLimits.begin(), FrameLimits.end(), settings.frameLimit) == FrameLimits.end() ? 60 : settings.frameLimit);
+    defaults->setBoolForKey(VSyncKey, settings.vSync);
     defaults->flush();
 }
 

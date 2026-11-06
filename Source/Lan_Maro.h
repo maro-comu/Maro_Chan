@@ -28,6 +28,8 @@ public:
 
     static std::shared_ptr<LanSession> host(const MatchConfig& config);
     static std::shared_ptr<LanSession> join(const std::string& ipv4);
+    static std::shared_ptr<LanSession> hostOnline(const MatchConfig& config, const std::string& endpoint);
+    static std::shared_ptr<LanSession> joinOnline(const std::string& code, const std::string& endpoint);
     static std::vector<std::string> localAddresses();
 
     ~LanSession();
@@ -35,6 +37,7 @@ public:
     bool hosting() const;
     bool started() const;
     bool connected() const;
+    std::string roomCode() const;
     const std::string& error() const;
     int localSlot() const;
     int connectedPlayers() const;
@@ -53,6 +56,7 @@ public:
 private:
     struct Impl;
     explicit LanSession(bool hosting);
+    static std::shared_ptr<LanSession> createHost(const MatchConfig& config, bool loopbackOnly);
     std::unique_ptr<Impl> impl_;
 };
 

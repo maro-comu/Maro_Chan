@@ -26,12 +26,14 @@ add_executable(MaroArena WIN32
     "${MARO_SOURCE_DIR}/Source/Arena_Maro.cpp"
     "${MARO_SOURCE_DIR}/Source/Battle_Maro.cpp"
     "${MARO_SOURCE_DIR}/Source/Lan_Maro.cpp"
+    "${MARO_SOURCE_DIR}/Source/Relay_Maro.cpp"
+    "${MARO_SOURCE_DIR}/Source/RoomCode_Maro.cpp"
     "${MARO_SOURCE_DIR}/Source/Presentation_Maro.cpp"
     "${MARO_SOURCE_DIR}/Source/Menu_Maro.cpp"
     "${MARO_SOURCE_DIR}/Source/Settings_Maro.cpp"
     "${MARO_SOURCE_DIR}/Source/Ui_Maro.cpp"
 )
-target_link_libraries(MaroArena PRIVATE cocos2d comctl32 ws2_32 iphlpapi xaudio2)
+target_link_libraries(MaroArena PRIVATE cocos2d comctl32 ws2_32 iphlpapi xaudio2 winhttp)
 target_compile_features(MaroArena PRIVATE cxx_std_17)
 target_compile_options(MaroArena PRIVATE /utf-8)
 target_compile_definitions(MaroArena PRIVATE NOMINMAX)
