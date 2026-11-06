@@ -3,18 +3,22 @@
 #include "Arena_Maro.h"
 #include "Lan_Maro.h"
 #include "Menu_Maro.h"
+#include "Settings_Maro.h"
 #include "Ui_Maro.h"
 #include "cocos2d.h"
 #include "platform/desktop/CCGLViewImpl-desktop.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstring>
 #include <iomanip>
 #include <new>
 #include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
+#include <xaudio2.h>
 
 namespace maro {
 namespace {
@@ -77,11 +81,81 @@ std::string matchText(const MatchConfig& config) {
 }
 
 enum class Overlay { None, Connecting, Augments, Waiting, Menu, Finished, Disconnected };
+enum class Sound { Hit, Parry, Blast };
+
+class BattleAudio {
+public:
+    BattleAudio() {
+        if (FAILED(XAudio2Create(&engine_))) {
+            return;
+        }
+        if (FAILED(engine_->CreateMasteringVoice(&output_))) {
+            engine_->Release();
+            engine_ = nullptr;
+        }
+    }
+
+    ~BattleAudio() {
+        for (auto& effect : effects_) {
+            if (effect.voice) {
+                effect.voice->DestroyVoice();
+            }
+        }
+        if (output_) {
+            output_->DestroyVoice();
+            engine_->Release();
+        }
+    }
+
+    void play(Sound sound, float volume) {
+        if (!output_) {
+            return;
+        }
+        constexpr std::array<const char*, 3> Paths{"hit_Maro.wav", "parry_Maro.wav", "blast_Maro.wav"};
+        const auto index = static_cast<std::size_t>(sound);
+        auto& effect = effects_[index];
+        if (!effect.voice) {
+            effect.data = cocos2d::FileUtils::getInstance()->getDataFromFile(Paths[index]);
+            if (effect.data.getSize() <= WaveHeaderSize
+                || std::memcmp(effect.data.getBytes() + 36, "data", 4) != 0) {
+                return;
+            }
+            const WAVEFORMATEX format{WAVE_FORMAT_PCM, 1, 22050, 44100, 2, 16, 0};
+            if (FAILED(engine_->CreateSourceVoice(&effect.voice, &format))) {
+                return;
+            }
+        }
+        XAUDIO2_BUFFER buffer{};
+        buffer.Flags = XAUDIO2_END_OF_STREAM;
+        buffer.AudioBytes = static_cast<UINT32>(effect.data.getSize() - WaveHeaderSize);
+        buffer.pAudioData = effect.data.getBytes() + WaveHeaderSize;
+        effect.voice->Stop();
+        effect.voice->FlushSourceBuffers();
+        effect.voice->SetVolume(volume);
+        if (SUCCEEDED(effect.voice->SubmitSourceBuffer(&buffer))) {
+            effect.voice->Start();
+        }
+    }
+
+private:
+    static constexpr int WaveHeaderSize = 44;
+
+    struct Effect {
+        cocos2d::Data data;
+        IXAudio2SourceVoice* voice = nullptr;
+    };
+
+    IXAudio2* engine_ = nullptr;
+    IXAudio2MasteringVoice* output_ = nullptr;
+    std::array<Effect, 3> effects_;
+};
 
 class BattleScene final : public Scene {
 public:
     BattleScene(std::shared_ptr<LanSession> session, ControlMode controls)
-        : session_(std::move(session)), config_(session_->config()), controls_(controls) {}
+        : session_(std::move(session)), config_(session_->config()), settings_(loadSettings()) {
+        settings_.controls = controls;
+    }
 
     bool initBattle();
     void onExit() override;
@@ -109,15 +183,18 @@ private:
     void updateCursor();
     void updateOverlay();
     void showAugments(Menu* buttons);
-    void showMenu(Menu* buttons);
+    void showSettings();
     void showResult(Menu* buttons);
     void showStatus(Menu* buttons, const std::string& title, const std::string& detail, bool canLeave);
     void choose(int index);
     void setPaused(bool paused);
+    void updateFeedback(float dt);
+    void playEffect(Sound sound, float intensity);
 
     std::shared_ptr<LanSession> session_;
     MatchConfig config_;
-    ControlMode controls_;
+    Settings settings_;
+    std::unique_ptr<BattleAudio> audio_;
     std::unique_ptr<Arena> arena_;
     MatchFrame hostFrame_;
     Node* field_ = nullptr;
@@ -142,6 +219,10 @@ private:
     int submittedLevel_ = 0;
     float publishTimer_ = 0.0f;
     float destinationMarker_ = 0.0f;
+    float shakeTime_ = 0.0f;
+    float previousHp_ = -1.0f;
+    float previousParry_ = 0.0f;
+    float previousBlast_ = 0.0f;
     bool haveDestination_ = false;
     bool haveAim_ = false;
     bool frameDirty_ = false;
@@ -221,7 +302,7 @@ void BattleScene::makeHud() {
         teamLabels_.push_back(ui::label(this, "", 13, {x, 711}, ui::teamColor(team)));
     }
     topMenu_ = ui::menu(this);
-    ui::button(topMenu_, "경기 메뉴  /  ESC", {1101, 745}, {158, 42}, [this] { setPaused(true); });
+    ui::button(topMenu_, "설정  /  ESC", {1101, 745}, {158, 42}, [this] { setPaused(true); });
 
     meters_ = DrawNode::create();
     addChild(meters_);
@@ -230,10 +311,6 @@ void BattleScene::makeHud() {
     level_ = ui::label(this, "", 15, {402, 91}, ui::Accent, LeftAnchor);
     levelHint_ = ui::label(this, "", 14, {750, 91}, ui::Muted, RightAnchor);
     kills_ = ui::label(this, "", 19, {1180, 83}, ui::Ink, RightAnchor);
-    ui::label(this, controls_ == ControlMode::Moba
-        ? "좌클릭 이동     Q 사격     E 방어     Shift 패링"
-        : "WASD 이동     좌클릭 사격     우클릭 방어     우클릭 + 좌클릭 패링",
-        14, {100, 35}, ui::Muted, LeftAnchor);
 }
 
 void BattleScene::listen() {
@@ -258,7 +335,7 @@ void BattleScene::listen() {
 }
 
 bool BattleScene::handleShortcut(Key key) {
-    if (key == Key::KEY_ESCAPE && session_->connected() && world().result == MatchResult::Playing) {
+    if (key == Key::KEY_ESCAPE) {
         setPaused(!menuOpen_);
         return true;
     }
@@ -273,7 +350,7 @@ void BattleScene::setKey(Key key, bool down) {
     if (down && !acceptingInput()) {
         return;
     }
-    if (controls_ == ControlMode::Moba) {
+    if (settings_.controls == ControlMode::Moba) {
         switch (key) {
         case Key::KEY_Q: keyFire_ = down; firePressed_ |= down; break;
         case Key::KEY_E: keyGuard_ = down; break;
@@ -308,7 +385,7 @@ void BattleScene::mouseDown(cocos2d::EventMouse* event) {
         return;
     }
     const auto button = event->getMouseButton();
-    if (controls_ == ControlMode::Moba) {
+    if (settings_.controls == ControlMode::Moba) {
         if (button == Mouse::BUTTON_LEFT) {
             destination_ = aim_;
             haveDestination_ = true;
@@ -362,7 +439,7 @@ Input BattleScene::battleInput() {
         return input;
     }
     input.parry = parryPressed_;
-    if (controls_ == ControlMode::Moba) {
+    if (settings_.controls == ControlMode::Moba) {
         input.moveTo = haveDestination_;
         input.destination = destination_;
         input.attack = keyFire_;
@@ -500,6 +577,47 @@ void BattleScene::drawWorld() {
     }
 }
 
+void BattleScene::playEffect(Sound sound, float intensity) {
+    const float volume = settings_.masterVolume * settings_.effectsVolume * intensity;
+    if (volume > 0.0f) {
+        if (!audio_) {
+            audio_ = std::make_unique<BattleAudio>();
+        }
+        audio_->play(sound, volume);
+    }
+}
+
+void BattleScene::updateFeedback(float dt) {
+    const auto* local = player();
+    if (!local) {
+        return;
+    }
+    shakeTime_ = std::max(0.0f, shakeTime_ - dt);
+    float nearbyBlast = 0.0f;
+    for (const auto& blast : world().blasts) {
+        if (point(blast.position).distanceSquared(point(local->position)) < 220.0f * 220.0f) {
+            nearbyBlast = std::max(nearbyBlast, world().elapsed + blast.remaining);
+        }
+    }
+    if (previousHp_ >= 0.0f) {
+        if (local->hp < previousHp_) {
+            playEffect(Sound::Hit, 0.7f);
+            shakeTime_ = 0.16f;
+        }
+        if (local->parryTime > previousParry_ + 0.04f) {
+            playEffect(Sound::Parry, 0.65f);
+        }
+        if (nearbyBlast > previousBlast_ + 0.02f) {
+            playEffect(Sound::Blast, 0.75f);
+        }
+    }
+    previousHp_ = local->hp;
+    previousParry_ = local->parryTime;
+    previousBlast_ = nearbyBlast;
+    const float shake = settings_.screenShake ? shakeTime_ / 0.16f : 0.0f;
+    field_->setPosition(FieldOrigin + Vec2(std::sin(shake * 32.0f) * 5.0f, std::cos(shake * 25.0f) * 3.0f) * shake);
+}
+
 void BattleScene::drawHud() {
     const auto& frame = world();
     const auto* actor = player();
@@ -558,14 +676,14 @@ void BattleScene::updateOverlay() {
     const auto& frame = world();
     const auto* local = player();
     const int slot = session_->localSlot();
-    if (local && frame.result != MatchResult::Playing) {
+    if (menuOpen_) {
+        next = Overlay::Menu;
+    } else if (local && frame.result != MatchResult::Playing) {
         next = Overlay::Finished;
     } else if (!session_->connected()) {
         next = Overlay::Disconnected;
     } else if (!local) {
         next = Overlay::Connecting;
-    } else if (menuOpen_) {
-        next = Overlay::Menu;
     } else if (frame.choosing[slot] && submittedLevel_ != local->level) {
         next = Overlay::Augments;
     } else if (std::any_of(frame.choosing.begin(), frame.choosing.end(), [](bool pending) { return pending; })) {
@@ -587,6 +705,10 @@ void BattleScene::updateOverlay() {
         return;
     }
     clearInput();
+    if (next == Overlay::Menu) {
+        showSettings();
+        return;
+    }
     overlayNode_ = Node::create();
     addChild(overlayNode_, 10);
     ui::panel(overlayNode_, {0, 0, 1280, 800}, {0.025f, 0.035f, 0.052f, 0.8f});
@@ -597,7 +719,6 @@ void BattleScene::updateOverlay() {
         showAugments(buttons);
         break;
     case Overlay::Menu:
-        showMenu(buttons);
         break;
     case Overlay::Finished:
         showResult(buttons);
@@ -637,13 +758,19 @@ void BattleScene::showAugments(Menu* buttons) {
     }
 }
 
-void BattleScene::showMenu(Menu* buttons) {
-    ui::panel(overlayNode_, {390, 247, 500, 306}, tint(ui::Background), tint(ui::Border));
-    ui::label(overlayNode_, "경기 메뉴", 33, {640, 488}, ui::Ink);
-    ui::label(overlayNode_, "메뉴를 열어도 경기는 계속됩니다.", 16, {640, 446}, ui::Muted);
-    ui::button(buttons, "경기로 돌아가기", {640, 378}, {314, 46}, [this] { setPaused(false); }, true);
-    ui::button(buttons, session_->hosting() ? "경기 종료" : "경기 나가기", {640, 312}, {314, 46},
-               [] { cocos2d::Director::getInstance()->replaceScene(createMenuScene()); });
+void BattleScene::showSettings() {
+    overlayNode_ = createSettingsOverlay(settings_, [this](const Settings& settings) {
+        const bool fullscreenChanged = settings_.fullscreen != settings.fullscreen;
+        settings_ = settings;
+        if (fullscreenChanged) {
+            setGameFullscreen(settings_.fullscreen);
+        }
+    }, [this] { setPaused(false); }, [] {
+        cocos2d::Director::getInstance()->replaceScene(createMenuScene());
+    }, session_->hosting() ? "경기 종료" : "경기 나가기");
+    if (overlayNode_) {
+        addChild(overlayNode_, 10);
+    }
 }
 
 void BattleScene::showResult(Menu* buttons) {
@@ -722,6 +849,7 @@ void BattleScene::update(float dt) {
     destinationMarker_ = std::max(0.0f, destinationMarker_ - dt);
     updateOverlay();
     updateCursor();
+    updateFeedback(dt);
     drawWorld();
     drawHud();
 }

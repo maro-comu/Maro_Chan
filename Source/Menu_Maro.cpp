@@ -3,6 +3,7 @@
 #include "Arena_Maro.h"
 #include "Battle_Maro.h"
 #include "Lan_Maro.h"
+#include "Settings_Maro.h"
 #include "Ui_Maro.h"
 #include "ui/UIEditBox/UIEditBox.h"
 
@@ -24,7 +25,6 @@ using namespace cocos2d;
 
 const Vec2 leftAnchor{0.0f, 0.5f};
 const Vec2 rightAnchor{1.0f, 0.5f};
-constexpr const char* controlSetting = "maro.controlMode";
 constexpr const char* teamCountSetting = "maro.teamCount";
 constexpr const char* roomCodeSetting = "maro.roomCode";
 constexpr std::string_view roomAlphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
@@ -80,10 +80,71 @@ void buildHeader(Scene* scene, const char* title, const char* caption) {
     }
 }
 
-class LobbyScene final : public Scene {
+class SettingsScene : public Scene {
+protected:
+    bool init() override {
+        if (!Scene::init()) {
+            return false;
+        }
+        auto* listener = EventListenerKeyboard::create();
+        listener->onKeyPressed = [this](EventKeyboard::KeyCode key, Event*) {
+            if (key == EventKeyboard::KeyCode::KEY_ESCAPE) {
+                toggleSettings();
+            }
+        };
+        getEventDispatcher()->addEventListenerWithSceneGraphPriority(listener, this);
+        return true;
+    }
+
+    void toggleSettings() {
+        if (settingsOverlay_) {
+            settingsOverlay_->removeFromParent();
+            settingsOverlay_ = nullptr;
+            return;
+        }
+        settingsOverlay_ = createSettingsOverlay(loadSettings(),
+            [](const Settings& settings) { setGameFullscreen(settings.fullscreen); },
+            [this] { toggleSettings(); });
+        if (settingsOverlay_) {
+            addChild(settingsOverlay_, 100);
+        }
+    }
+
+private:
+    Node* settingsOverlay_ = nullptr;
+};
+
+class StartScene final : public SettingsScene {
 public:
-    static LobbyScene* create(std::shared_ptr<LanSession> session, ControlMode controls) {
-        auto* lobby = new LobbyScene(std::move(session), controls);
+    CREATE_FUNC(StartScene);
+
+    bool init() override {
+        if (!SettingsScene::init()) {
+            return false;
+        }
+        ui::panel(this, {0, 0, 1280, 800}, Color4F(ui::Background));
+        ui::panel(this, {292, 148, 696, 504}, Color4F(ui::Surface), Color4F(ui::Border));
+        ui::panel(this, {584, 613, 112, 3}, Color4F(ui::Accent));
+        ui::label(this, "멀티 사격 게임", 63, {640, 540}, ui::Ink);
+        ui::label(this, "팀을 구성하고 친구와 사격 대결을 펼치세요.", 19, {640, 463}, ui::Muted);
+        auto* buttons = ui::menu(this);
+        ui::button(buttons, "계속하기", {640, 363}, {310, 58}, [] {
+            Director::getInstance()->replaceScene(createMenuScene());
+        }, true, 24);
+        ui::button(buttons, "나가기", {640, 286}, {310, 50}, [] {
+            Director::getInstance()->end();
+        }, false, 21);
+        ui::button(buttons, "설정  /  ESC", {640, 200}, {158, 40}, [this] {
+            toggleSettings();
+        }, false, 16);
+        return true;
+    }
+};
+
+class LobbyScene final : public SettingsScene {
+public:
+    static LobbyScene* create(std::shared_ptr<LanSession> session) {
+        auto* lobby = new LobbyScene(std::move(session));
         if (!lobby->init()) {
             delete lobby;
             return nullptr;
@@ -93,7 +154,7 @@ public:
     }
 
     bool init() override {
-        if (!Scene::init()) {
+        if (!SettingsScene::init()) {
             return false;
         }
         buildHeader(this, "경기 대기실", session_->hosting() ? "LAN  /  방장" : "LAN  /  참가자");
@@ -105,6 +166,9 @@ public:
         count_ = ui::label(this, "연결 확인 중", 25, {76, 104}, ui::Ink, leftAnchor);
         status_ = ui::label(this, "", 16, {76, 72}, ui::Muted, leftAnchor);
         auto* buttons = ui::menu(this);
+        ui::button(buttons, "설정  /  ESC", {1156, 694}, {152, 42}, [this] {
+            toggleSettings();
+        }, false, 16);
         ui::button(buttons, "나가기", {session_->hosting() ? 905.0f : 1096.0f, 90}, {136, 50}, [] {
             Director::getInstance()->replaceScene(createMenuScene());
         });
@@ -121,7 +185,7 @@ public:
     void update(float) override {
         session_->poll();
         if (session_->started() && session_->connected() && session_->error().empty()) {
-            auto* battle = createBattleScene(session_, controls_);
+            auto* battle = createBattleScene(session_, loadSettings().controls);
             if (battle) {
                 unscheduleUpdate();
                 Director::getInstance()->replaceScene(battle);
@@ -132,8 +196,7 @@ public:
     }
 
 private:
-    explicit LobbyScene(std::shared_ptr<LanSession> session, ControlMode controls)
-        : session_(std::move(session)), controls_(controls) {}
+    explicit LobbyScene(std::shared_ptr<LanSession> session) : session_(std::move(session)) {}
 
     std::string connectionInfo() const {
         if (!session_->hosting()) {
@@ -219,7 +282,6 @@ private:
     }
 
     std::shared_ptr<LanSession> session_;
-    ControlMode controls_;
     std::array<Node*, 4> cards_{};
     std::array<std::array<Label*, 4>, 4> seats_{};
     Label* count_ = nullptr;
@@ -227,21 +289,28 @@ private:
     MenuItemLabel* start_ = nullptr;
 };
 
-class SetupScene : public Scene {
+class SetupScene final : public SettingsScene {
 public:
     CREATE_FUNC(SetupScene);
 
     bool init() override {
-        if (!Scene::init()) {
+        if (!SettingsScene::init()) {
             return false;
         }
         restoreSettings();
 
         buildHeader(this, "멀티 사격 게임", nullptr);
+        auto* header = ui::menu(this);
+        ui::button(header, "처음으로", {981, 692}, {146, 42}, [] {
+            Director::getInstance()->replaceScene(createStartScene());
+        }, false, 16);
+        ui::button(header, "설정  /  ESC", {1156, 692}, {152, 42}, [this] {
+            toggleSettings();
+        }, false, 16);
 
         buildMatchSetup();
-        buildControls();
-        buildFooter();
+        buildRoomPanel();
+        buildSummary();
         refresh();
         return true;
     }
@@ -304,30 +373,17 @@ private:
         }
     }
 
-    void buildControls() {
+    void buildRoomPanel() {
         ui::panel(this, {768, 160, 464, 472}, Color4F(ui::Surface), Color4F(ui::Border));
-        ui::label(this, "조작 설정", 24, {796, 595}, ui::Ink, leftAnchor);
-        auto* controls = ui::menu(this);
-        controlButtons[0] = ui::button(controls, "WASD", {893, 548}, {194, 38}, [this] { setControls(ControlMode::Wasd); });
-        controlButtons[1] = ui::button(controls, "MOBA", {1107, 548}, {194, 38}, [this] { setControls(ControlMode::Moba); });
-
-        const std::array<const char*, 5> actions{{"이동", "조준", "공격", "방어", "패링"}};
-        for (int i = 0; i < 5; ++i) {
-            const float y = 476.0f - 47.0f * i;
-            ui::panel(this, {796, y - 23, 408, 1}, Color4F(ui::Border));
-            ui::label(this, actions[i], 15, {796, y}, ui::Muted, leftAnchor);
-            bindingLabels[i] = ui::label(this, " ", 18, {1204, y}, ui::Ink, rightAnchor);
-        }
-        ui::label(this, "조작 방식은 내 컴퓨터에 저장됩니다.", 16, {796, 198}, ui::Muted, leftAnchor);
-    }
-
-    void buildFooter() {
-        ui::panel(this, {48, 46, 1184, 88}, Color4F(ui::Surface), Color4F(ui::Border));
-        ui::label(this, "방을 만들 때 적용할 구성", 14, {76, 107}, ui::Muted, leftAnchor);
-        matchFormat = ui::label(this, " ", 26, {76, 77}, ui::Ink, leftAnchor);
-        ui::panel(this, {552, 65, 268, 50}, Color4F(ui::Background), Color4F(ui::Border));
-        address = cocos2d::ui::EditBox::create({252, 46}, "");
-        address->setPosition({686, 90});
+        ui::label(this, "친구와 경기", 24, {796, 595}, ui::Ink, leftAnchor);
+        ui::label(this, "왼쪽에서 팀을 구성한 뒤 방을 만드세요.", 17, {796, 548}, ui::Muted, leftAnchor);
+        auto* buttons = ui::menu(this);
+        ui::button(buttons, "방 만들기", {1000, 486}, {408, 52}, [this] { host(); }, true, 22);
+        ui::panel(this, {796, 423, 408, 1}, Color4F(ui::Border));
+        ui::label(this, "같은 네트워크의 친구 방에 참가하세요.", 17, {796, 378}, ui::Muted, leftAnchor);
+        ui::panel(this, {796, 284, 408, 50}, Color4F(ui::Background), Color4F(ui::Border));
+        address = cocos2d::ui::EditBox::create({392, 46}, "");
+        address->setPosition({1000, 309});
         address->setInputMode(cocos2d::ui::EditBox::InputMode::SINGLE_LINE);
         address->setFont("Arial", 19);
         address->setFontColor(ui::Ink);
@@ -337,16 +393,18 @@ private:
         address->setMaxLength(7);
         address->setText(UserDefault::getInstance()->getStringForKey(roomCodeSetting).c_str());
         addChild(address);
+        ui::button(buttons, "방 참가", {1000, 238}, {408, 50}, [this] { join(); }, false, 22);
+    }
 
-        auto* footer = ui::menu(this);
-        ui::button(footer, "참가", {905, 90}, {136, 50}, [this] { join(); }, false, 22);
-        ui::button(footer, "방 만들기", {1096, 90}, {216, 50}, [this] { host(); }, true, 22);
-        notice = ui::label(this, "", 15, {48, 24}, ui::teamColor(1), leftAnchor);
+    void buildSummary() {
+        ui::panel(this, {48, 46, 1184, 88}, Color4F(ui::Surface), Color4F(ui::Border));
+        ui::label(this, "방을 만들 때 적용할 구성", 14, {76, 107}, ui::Muted, leftAnchor);
+        matchFormat = ui::label(this, " ", 26, {76, 77}, ui::Ink, leftAnchor);
+        notice = ui::label(this, "", 16, {1204, 90}, ui::teamColor(1), rightAnchor);
     }
 
     void restoreSettings() {
         auto* defaults = UserDefault::getInstance();
-        config.controls = defaults->getBoolForKey(controlSetting) ? ControlMode::Moba : ControlMode::Wasd;
         config.teams = std::clamp(defaults->getIntegerForKey(teamCountSetting, config.teams), 2, 4);
         for (std::size_t i = 0; i < teamSizeSettings.size(); ++i) {
             config.teamSizes[i] = std::clamp(defaults->getIntegerForKey(teamSizeSettings[i], config.teamSizes[i]), 1, 4);
@@ -360,6 +418,7 @@ private:
             defaults->setIntegerForKey(teamSizeSettings[i], config.teamSizes[i]);
         }
         defaults->flush();
+        config.controls = loadSettings().controls;
         openLobby(LanSession::host(config));
     }
 
@@ -381,17 +440,9 @@ private:
             notice->setString("연결을 열 수 없습니다.");
         } else if (!session->error().empty()) {
             notice->setString(session->error());
-        } else if (auto* lobby = LobbyScene::create(std::move(session), config.controls)) {
+        } else if (auto* lobby = LobbyScene::create(std::move(session))) {
             Director::getInstance()->replaceScene(lobby);
         }
-    }
-
-    void setControls(ControlMode mode) {
-        config.controls = mode;
-        auto* defaults = UserDefault::getInstance();
-        defaults->setBoolForKey(controlSetting, mode == ControlMode::Moba);
-        defaults->flush();
-        refresh();
     }
 
     void refresh() {
@@ -424,28 +475,21 @@ private:
         }
         matchFormat->setString(format + "   /   " + std::to_string(fighters) + "명");
 
-        const bool moba = config.controls == ControlMode::Moba;
-        ui::setButtonActive(controlButtons[0], !moba);
-        ui::setButtonActive(controlButtons[1], moba);
-        const std::array<const char*, 5> wasdBindings{{"W / A / S / D", "마우스 커서", "좌클릭", "우클릭 유지", "우클릭 + 좌클릭"}};
-        const std::array<const char*, 5> mobaBindings{{"좌클릭", "마우스 커서", "Q", "E 유지", "Shift"}};
-        const auto& bindings = moba ? mobaBindings : wasdBindings;
-        for (std::size_t i = 0; i < bindings.size(); ++i) {
-            bindingLabels[i]->setString(bindings[i]);
-        }
     }
 
     MatchConfig config;
     std::array<MenuItemLabel*, 4> presets{};
     std::array<MenuItemLabel*, 3> teamCountButtons{};
     std::array<TeamRow, 4> teamRows{};
-    std::array<MenuItemLabel*, 2> controlButtons{};
-    std::array<Label*, 5> bindingLabels{};
     Label* matchFormat = nullptr;
     Label* notice = nullptr;
     cocos2d::ui::EditBox* address = nullptr;
 };
 
+}
+
+cocos2d::Scene* createStartScene() {
+    return StartScene::create();
 }
 
 cocos2d::Scene* createMenuScene() {
