@@ -72,19 +72,10 @@ std::string decodeRoomCode(const std::string& code) {
         + "." + std::to_string((value >> 8) & 255) + "." + std::to_string(value & 255);
 }
 
-void buildHeader(Node* view, const char* title, const char* caption) {
-    ui::panel(view, {0, 0, 1280, 800}, Color4F(ui::Background));
-    ui::label(view, title, 58, {47, 692}, ui::Ink, leftAnchor);
-    if (caption) {
-        ui::label(view, caption, 17, {1232, 750}, ui::Muted, rightAnchor);
-    }
-}
-
-template<class Base>
-class SettingsView : public Base {
+class SettingsView : public Node {
 protected:
     bool init() override {
-        if (!Base::init()) {
+        if (!Node::init()) {
             return false;
         }
         auto* listener = EventListenerKeyboard::create();
@@ -94,7 +85,7 @@ protected:
                 toggleSettings();
             }
         };
-        this->getEventDispatcher()->addEventListenerWithSceneGraphPriority(listener, this);
+        getEventDispatcher()->addEventListenerWithSceneGraphPriority(listener, this);
         return true;
     }
 
@@ -108,7 +99,7 @@ protected:
             [](const Settings& settings) { setGameFullscreen(settings.fullscreen); },
             [this] { toggleSettings(); });
         if (settingsOverlay_) {
-            this->addChild(settingsOverlay_, 100);
+            addChild(settingsOverlay_, 100);
         }
     }
 
@@ -116,37 +107,35 @@ private:
     Node* settingsOverlay_ = nullptr;
 };
 
-class LobbyScene final : public SettingsView<Scene> {
+class RoomPanel final : public Node {
 public:
-    static LobbyScene* create(std::shared_ptr<LanSession> session) {
-        auto* lobby = new LobbyScene(std::move(session));
-        if (!lobby->init()) {
-            delete lobby;
+    static RoomPanel* create(std::shared_ptr<LanSession> session, std::function<void()> onLeave) {
+        auto* panel = new RoomPanel(std::move(session));
+        if (!panel->initRoom(std::move(onLeave))) {
+            delete panel;
             return nullptr;
         }
-        lobby->autorelease();
-        return lobby;
+        panel->autorelease();
+        return panel;
     }
 
-    bool init() override {
-        if (!SettingsView::init()) {
+private:
+    explicit RoomPanel(std::shared_ptr<LanSession> session) : session_(std::move(session)) {}
+
+    bool initRoom(std::function<void()> onLeave) {
+        if (!Node::init()) {
             return false;
         }
-        buildHeader(this, "경기 대기실", session_->hosting() ? "LAN  /  방장" : "LAN  /  참가자");
-        auto* connection = ui::label(this, connectionInfo(), 17, {48, 641}, ui::Muted, leftAnchor);
-        connection->setWidth(1184);
+        auto* connection = ui::label(this, connectionInfo(), 17, {250, 647}, ui::Muted, leftAnchor);
+        connection->setWidth(982);
         buildTeamCards();
 
         ui::panel(this, {48, 46, 1184, 88}, Color4F(ui::Surface), Color4F(ui::Border));
         count_ = ui::label(this, "연결 확인 중", 25, {76, 104}, ui::Ink, leftAnchor);
         status_ = ui::label(this, "", 16, {76, 72}, ui::Muted, leftAnchor);
         auto* buttons = ui::menu(this);
-        ui::button(buttons, "설정  /  ESC", {1156, 694}, {152, 42}, [this] {
-            toggleSettings();
-        }, false, 16);
-        ui::button(buttons, "나가기", {session_->hosting() ? 905.0f : 1096.0f, 90}, {136, 50}, [] {
-            Director::getInstance()->replaceScene(createMenuScene());
-        });
+        ui::button(buttons, "방 나가기", {session_->hosting() ? 905.0f : 1096.0f, 90},
+                   {136, 50}, std::move(onLeave));
         if (session_->hosting()) {
             start_ = ui::button(buttons, "경기 시작", {1096, 90}, {216, 50}, [this] {
                 session_->start();
@@ -169,9 +158,6 @@ public:
         }
         refresh();
     }
-
-private:
-    explicit LobbyScene(std::shared_ptr<LanSession> session) : session_(std::move(session)) {}
 
     std::string connectionInfo() const {
         if (!session_->hosting()) {
@@ -264,7 +250,7 @@ private:
     MenuItemLabel* start_ = nullptr;
 };
 
-class SetupLayer final : public SettingsView<Node> {
+class SetupLayer final : public SettingsView {
 public:
     bool initMenu(std::function<void()> onContinue, std::function<void()> onLeaveMatch) {
         if (!SettingsView::init()) {
@@ -279,7 +265,9 @@ public:
         }
         restoreSettings();
 
-        buildHeader(this, "멀티 사격 게임", nullptr);
+        ui::panel(this, {0, 0, 1280, 800}, Color4F(ui::Background));
+        ui::label(this, "멀티 사격 게임", 58, {47, 692}, ui::Ink, leftAnchor);
+        ui::label(this, "경기 준비", 18, {48, 647}, ui::Muted, leftAnchor);
         auto* header = ui::menu(this);
         ui::button(header, "나가기", {981, 692}, {146, 42}, [] {
             Director::getInstance()->end();
@@ -288,6 +276,8 @@ public:
             toggleSettings();
         }, false, 16);
 
+        setupContent_ = Node::create();
+        addChild(setupContent_);
         buildMatchSetup();
         buildRoomPanel();
         buildSummary(std::move(onContinue), std::move(onLeaveMatch));
@@ -302,12 +292,12 @@ private:
     };
 
     void buildMatchSetup() {
-        ui::panel(this, {48, 160, 696, 472}, Color4F(ui::Surface), Color4F(ui::Border));
-        ui::label(this, "경기 설정", 24, {76, 595}, ui::Ink, leftAnchor);
-        ui::label(this, "기본 구성", 15, {76, 549}, ui::Muted, leftAnchor);
-        ui::label(this, "팀 수", 15, {76, 501}, ui::Muted, leftAnchor);
+        ui::panel(setupContent_, {48, 160, 696, 472}, Color4F(ui::Surface), Color4F(ui::Border));
+        ui::label(setupContent_, "팀 구성", 24, {76, 595}, ui::Ink, leftAnchor);
+        ui::label(setupContent_, "기본 구성", 15, {76, 549}, ui::Muted, leftAnchor);
+        ui::label(setupContent_, "팀 수", 15, {76, 501}, ui::Muted, leftAnchor);
 
-        auto* setupButtons = ui::menu(this);
+        auto* setupButtons = ui::menu(setupContent_);
         for (int i = 0; i < 4; ++i) {
             const int size = i + 1;
             const auto value = std::to_string(size);
@@ -326,15 +316,15 @@ private:
             });
         }
 
-        ui::panel(this, {76, 472, 640, 1}, Color4F(ui::Border));
-        ui::label(this, "팀", 14, {76, 448}, ui::Muted, leftAnchor);
-        ui::label(this, "팀별 참가 인원", 14, {716, 448}, ui::Muted, rightAnchor);
+        ui::panel(setupContent_, {76, 472, 640, 1}, Color4F(ui::Border));
+        ui::label(setupContent_, "팀", 14, {76, 448}, ui::Muted, leftAnchor);
+        ui::label(setupContent_, "팀별 참가 인원", 14, {716, 448}, ui::Muted, rightAnchor);
 
         for (int team = 0; team < 4; ++team) {
             const float y = 414.0f - 58.0f * team;
             auto& row = teamRows[team];
             row.node = Node::create();
-            addChild(row.node);
+            setupContent_->addChild(row.node);
             ui::panel(row.node, {76, y - 24, 640, 48}, Color4F(ui::Background));
             ui::panel(row.node, {76, y - 24, 3, 48}, Color4F(ui::teamColor(team)));
             ui::label(row.node, std::to_string(team + 1) + "팀", 18, {96, y}, ui::Ink, leftAnchor);
@@ -354,12 +344,12 @@ private:
     }
 
     void buildRoomPanel() {
-        ui::panel(this, {768, 160, 464, 472}, Color4F(ui::Surface), Color4F(ui::Border));
-        auto* buttons = ui::menu(this);
+        ui::panel(setupContent_, {768, 160, 464, 472}, Color4F(ui::Surface), Color4F(ui::Border));
+        auto* buttons = ui::menu(setupContent_);
         auto* create = ui::button(buttons, "방 만들기", {1000, 512}, {408, 56}, [this] { host(); }, !canResume_, 22);
         create->setEnabled(!canResume_);
-        ui::panel(this, {796, 437, 408, 1}, Color4F(ui::Border));
-        ui::panel(this, {796, 340, 408, 50}, Color4F(ui::Background), Color4F(ui::Border));
+        ui::panel(setupContent_, {796, 437, 408, 1}, Color4F(ui::Border));
+        ui::panel(setupContent_, {796, 340, 408, 50}, Color4F(ui::Background), Color4F(ui::Border));
         address = cocos2d::ui::EditBox::create({392, 46}, "");
         address->setPosition({1000, 365});
         address->setInputMode(cocos2d::ui::EditBox::InputMode::SINGLE_LINE);
@@ -371,24 +361,24 @@ private:
         address->setMaxLength(7);
         address->setText(UserDefault::getInstance()->getStringForKey(roomCodeSetting).c_str());
         address->setEnabled(!canResume_);
-        addChild(address);
+        setupContent_->addChild(address);
         auto* joinRoom = ui::button(buttons, "방 참여", {1000, 285}, {408, 50}, [this] { join(); }, false, 22);
         joinRoom->setEnabled(!canResume_);
     }
 
     void buildSummary(std::function<void()> onContinue, std::function<void()> onLeaveMatch) {
-        ui::panel(this, {48, 46, 1184, 88}, Color4F(ui::Surface), Color4F(ui::Border));
-        ui::label(this, "방을 만들 때 적용할 구성", 14, {76, 107}, ui::Muted, leftAnchor);
-        matchFormat = ui::label(this, " ", 26, {76, 77}, ui::Ink, leftAnchor);
+        ui::panel(setupContent_, {48, 46, 1184, 88}, Color4F(ui::Surface), Color4F(ui::Border));
+        ui::label(setupContent_, "방을 만들 때 적용할 구성", 14, {76, 107}, ui::Muted, leftAnchor);
+        matchFormat = ui::label(setupContent_, " ", 26, {76, 77}, ui::Ink, leftAnchor);
         if (canResume_) {
-            ui::label(this, "진행 중인 경기", 17, {678, 90}, ui::Muted, rightAnchor);
-            auto* buttons = ui::menu(this);
+            ui::label(setupContent_, "진행 중인 경기", 17, {678, 90}, ui::Muted, rightAnchor);
+            auto* buttons = ui::menu(setupContent_);
             if (onLeaveMatch) {
                 ui::button(buttons, "경기 나가기", {805, 90}, {188, 50}, std::move(onLeaveMatch), false, 20);
             }
             ui::button(buttons, "계속하기", {1064, 90}, {280, 50}, std::move(onContinue), true, 23);
         } else {
-            notice = ui::label(this, "", 16, {1204, 90}, ui::teamColor(1), rightAnchor);
+            notice = ui::label(setupContent_, "", 16, {1204, 90}, ui::teamColor(1), rightAnchor);
         }
     }
 
@@ -408,7 +398,7 @@ private:
         }
         defaults->flush();
         config.controls = loadSettings().controls;
-        openLobby(LanSession::host(config));
+        openRoom(LanSession::host(config));
     }
 
     void join() {
@@ -421,17 +411,28 @@ private:
         auto* defaults = UserDefault::getInstance();
         defaults->setStringForKey(roomCodeSetting, code);
         defaults->flush();
-        openLobby(LanSession::join(ipv4));
+        openRoom(LanSession::join(ipv4));
     }
 
-    void openLobby(std::shared_ptr<LanSession> session) {
+    void openRoom(std::shared_ptr<LanSession> session) {
         if (!session) {
             notice->setString("연결을 열 수 없습니다.");
         } else if (!session->error().empty()) {
             notice->setString(session->error());
-        } else if (auto* lobby = LobbyScene::create(std::move(session))) {
-            Director::getInstance()->replaceScene(lobby);
+        } else if (auto* panel = RoomPanel::create(std::move(session), [this] { closeRoom(); })) {
+            notice->setString("");
+            address->setVisible(false);
+            setupContent_->setVisible(false);
+            room_ = panel;
+            addChild(room_);
         }
+    }
+
+    void closeRoom() {
+        room_->removeFromParent();
+        room_ = nullptr;
+        setupContent_->setVisible(true);
+        address->setVisible(true);
     }
 
     void refresh() {
@@ -472,6 +473,8 @@ private:
     Label* matchFormat = nullptr;
     Label* notice = nullptr;
     cocos2d::ui::EditBox* address = nullptr;
+    Node* setupContent_ = nullptr;
+    RoomPanel* room_ = nullptr;
     bool canResume_ = false;
 };
 
