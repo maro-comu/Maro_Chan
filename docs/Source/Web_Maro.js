@@ -7,11 +7,19 @@ const levelCap = 6;
 const levelInterval = 15;
 const teamColors = ["#65e5ca", "#ff867a", "#8daaff", "#ffcb73"];
 const preferenceKey = "maro.browser.settings";
+const defaultPreferences = {
+    controls: "wasd",
+    masterVolume: 80,
+    effectsVolume: 75,
+    screenShake: !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+    showFps: false
+};
 const bindings = {
     wasd: ["W / A / S / D", "마우스 커서", "좌클릭", "우클릭 유지", "우클릭 + 좌클릭"],
     moba: ["좌클릭", "마우스 커서", "Q", "E 유지", "Shift"]
 };
 const $ = id => document.getElementById(id);
+const settingsDialog = $("settings-dialog");
 const canvas = $("arena");
 const drawing = canvas.getContext("2d", { alpha: false });
 const keys = new Set();
@@ -29,7 +37,7 @@ for (let y = 56; y < height; y += 56) {
 }
 
 const settings = readSettings();
-let screen = "setup";
+let screen = "front";
 let session = null;
 let arena = null;
 let frame = null;
@@ -45,6 +53,14 @@ let rightMouse = false;
 let attackPressed = false;
 let parryPressed = false;
 let destination = null;
+let fullscreenChanging = false;
+let wasFullscreen = Boolean(document.fullscreenElement);
+let lastEscape = -Infinity;
+let audio = null;
+let feedback = null;
+let shakeUntil = 0;
+let fpsStarted = 0;
+let fpsFrames = 0;
 
 function readSettings() {
     let saved;
@@ -56,7 +72,11 @@ function readSettings() {
     return {
         teams: clampInteger(saved?.teams, 2, 4, 2),
         teamSizes: Array.from({ length: 4 }, (_, team) => clampInteger(saved?.teamSizes?.[team], 1, 4, 1)),
-        controls: saved?.controls === "moba" ? "moba" : "wasd"
+        controls: saved?.controls === "moba" ? "moba" : defaultPreferences.controls,
+        masterVolume: clampInteger(saved?.masterVolume, 0, 100, defaultPreferences.masterVolume),
+        effectsVolume: clampInteger(saved?.effectsVolume, 0, 100, defaultPreferences.effectsVolume),
+        screenShake: typeof saved?.screenShake === "boolean" ? saved.screenShake : defaultPreferences.screenShake,
+        showFps: saved?.showFps === true
     };
 }
 
@@ -144,7 +164,6 @@ function renderSettings() {
     });
     $("team-sizes").replaceChildren(...rows);
     setText($("format"), `${matchFormat(settings)}  /  ${totalPlayers(settings)}명`);
-    renderBindings();
 }
 
 function renderBindings() {
@@ -157,12 +176,123 @@ function renderBindings() {
         row.append(element("dt", action), element("dd", bindings[settings.controls][index]));
         return row;
     }));
-    setText($("game-controls"), actions.map((action, index) => `${action} ${bindings[settings.controls][index]}`).join("   ·   "));
+}
+
+function renderPreferences() {
+    renderBindings();
+    for (const [volume, value] of [["master", settings.masterVolume], ["effects", settings.effectsVolume]]) {
+        setText($(`volume-${volume}`), `${value}%`);
+        for (const button of settingsDialog.querySelectorAll(`[data-volume="${volume}"]`)) {
+            button.disabled = Number(button.dataset.delta) < 0 ? value === 0 : value === 100;
+        }
+    }
+    for (const [id, enabled] of [
+        ["screen-shake", settings.screenShake], ["show-fps", settings.showFps],
+        ["fullscreen", Boolean(document.fullscreenElement)]
+    ]) {
+        setActive($(id), enabled);
+        setText($(id), enabled ? "켜짐" : "꺼짐");
+    }
+    $("fullscreen").disabled = !document.fullscreenEnabled;
+    $("fps-counter").hidden = !settings.showFps;
+    $("game-leave").hidden = screen !== "game";
+}
+
+function applyPreferences() {
+    saveSettings();
+    renderPreferences();
+}
+
+function openSettings() {
+    if (settingsDialog.open || screen === "exited") return;
+    clearInput();
+    settingsStatus("");
+    renderPreferences();
+    settingsDialog.showModal();
+    $("settings-close").focus();
+}
+
+function settingsStatus(message) {
+    const status = $("settings-status");
+    setText(status, message);
+    status.hidden = !message;
+}
+
+function toggleSettings() {
+    if (settingsDialog.open) settingsDialog.close();
+    else openSettings();
+}
+
+async function toggleFullscreen() {
+    fullscreenChanging = true;
+    try {
+        if (document.fullscreenElement) await document.exitFullscreen();
+        else await document.documentElement.requestFullscreen({ navigationUI: "hide" });
+        settingsStatus("");
+    } catch {
+        settingsStatus("이 브라우저에서는 전체 화면을 사용할 수 없습니다.");
+    } finally {
+        fullscreenChanging = false;
+        renderPreferences();
+    }
+}
+
+function prepareAudio() {
+    if (!window.AudioContext) return;
+    try {
+        audio ??= new AudioContext();
+    } catch {
+        return;
+    }
+    if (audio.state === "suspended") audio.resume().catch(() => {});
+}
+
+const sounds = {
+    shot: ["triangle", 210, 85, 0.07, 0.23],
+    hit: ["sine", 110, 46, 0.13, 0.32],
+    parry: ["triangle", 790, 1350, 0.13, 0.18],
+    blast: ["triangle", 83, 30, 0.19, 0.23]
+};
+
+function playSound(name) {
+    const volume = settings.masterVolume * settings.effectsVolume / 10000;
+    if (audio?.state !== "running" || volume === 0) return;
+    const [wave, start, end, duration, strength] = sounds[name];
+    const now = audio.currentTime;
+    const oscillator = audio.createOscillator();
+    const gain = audio.createGain();
+    oscillator.type = wave;
+    oscillator.frequency.setValueAtTime(start, now);
+    oscillator.frequency.exponentialRampToValueAtTime(end, now + duration);
+    gain.gain.setValueAtTime(strength * volume, now);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+    oscillator.connect(gain).connect(audio.destination);
+    oscillator.start();
+    oscillator.stop(now + duration);
+}
+
+function updateFeedback(now) {
+    const actor = localActor();
+    if (!actor) return;
+    const blastTime = frame.effects.reduce((latest, effect) =>
+        Math.hypot(effect.x - actor.position.x, effect.y - actor.position.y) < 220
+            ? Math.max(latest, frame.elapsed + effect.life) : latest, 0);
+    if (feedback) {
+        if (actor.hp < feedback.hp) {
+            playSound("hit");
+            shakeUntil = now + 160;
+        }
+        if (actor.shots > feedback.shots) playSound("shot");
+        if (actor.parryTime > feedback.parry + 0.04) playSound("parry");
+        if (blastTime > feedback.blastTime + 0.02) playSound("blast");
+    }
+    feedback = { hp: actor.hp, shots: actor.shots ?? 0, parry: actor.parryTime, blastTime };
 }
 
 function show(next) {
     screen = next;
-    for (const id of ["setup", "lobby", "game"]) $(id).hidden = id !== next;
+    for (const id of ["front", "setup", "lobby", "game", "exited"]) $(id).hidden = id !== next;
+    if (settingsDialog.open) renderPreferences();
 }
 
 function setupError(message) {
@@ -190,6 +320,7 @@ function openRoom(create) {
 }
 
 function leaveRoom() {
+    if (settingsDialog.open) settingsDialog.close();
     session?.close();
     session = null;
     arena = null;
@@ -197,6 +328,16 @@ function leaveRoom() {
     clearInput();
     setupError("");
     show("setup");
+}
+
+function exitGame() {
+    if (document.fullscreenElement) {
+        fullscreenChanging = true;
+        document.exitFullscreen().catch(() => {}).finally(() => { fullscreenChanging = false; });
+    }
+    show("exited");
+    $("reopen").focus();
+    if (window.opener || history.length === 1) window.close();
 }
 
 function renderLobby() {
@@ -253,6 +394,10 @@ async function copyRoomCode() {
 function beginMatch(now) {
     arena = session.hosting ? new Arena(session.config) : null;
     frame = arena?.snapshot() ?? session.frame;
+    feedback = null;
+    shakeUntil = 0;
+    fpsStarted = 0;
+    fpsFrames = 0;
     previousTick = now;
     nextPublish = 0;
     nextSend = 0;
@@ -283,7 +428,7 @@ function localActor() {
 }
 
 function canPlay() {
-    return screen === "game" && $("battle-overlay").hidden && (localActor()?.hp ?? 0) > 0;
+    return screen === "game" && !settingsDialog.open && $("battle-overlay").hidden && (localActor()?.hp ?? 0) > 0;
 }
 
 function inputState() {
@@ -341,6 +486,7 @@ function tickSession() {
         }
     }
     previousTick = now;
+    updateFeedback(now);
     renderHud();
 }
 
@@ -504,6 +650,9 @@ function drawWorld() {
     drawing.lineWidth = 1;
     drawing.stroke(grid);
     if (!frame) return;
+    const shake = settings.screenShake ? Math.max(0, shakeUntil - performance.now()) / 160 : 0;
+    drawing.save();
+    drawing.translate(Math.sin(shake * 32) * 5 * shake, Math.cos(shake * 25) * 3 * shake);
     for (const cover of frame.obstacles) {
         const top = Math.min(cover.top, cover.bottom);
         const span = Math.abs(cover.top - cover.bottom);
@@ -526,6 +675,7 @@ function drawWorld() {
         drawing.globalAlpha = 1;
     }
     frame.actors.forEach(drawFighter);
+    drawing.restore();
     if (pointer.inside && canPlay()) {
         strokeLine(pointer.x - 8, pointer.y, pointer.x - 3, pointer.y, "#f2f7fc", 1.4);
         strokeLine(pointer.x + 3, pointer.y, pointer.x + 8, pointer.y, "#f2f7fc", 1.4);
@@ -534,8 +684,22 @@ function drawWorld() {
     }
 }
 
-function render() {
-    if (screen === "game") drawWorld();
+function render(now) {
+    if (screen === "game") {
+        drawWorld();
+        if (settings.showFps) {
+            fpsStarted ||= now;
+            fpsFrames++;
+            if (now - fpsStarted >= 500) {
+                setText($("fps-counter"), `${Math.round(fpsFrames * 1000 / (now - fpsStarted))} FPS`);
+                fpsStarted = now;
+                fpsFrames = 0;
+            }
+        } else {
+            fpsStarted = 0;
+            fpsFrames = 0;
+        }
+    }
     requestAnimationFrame(render);
 }
 
@@ -560,11 +724,60 @@ $("join-form").addEventListener("submit", event => {
 $("copy-room").addEventListener("click", copyRoomCode);
 $("start").addEventListener("click", () => session?.start());
 for (const id of ["lobby-leave", "game-leave", "message-leave"]) $(id).addEventListener("click", leaveRoom);
+$("continue").addEventListener("click", () => {
+    prepareAudio();
+    show("setup");
+    $("host").focus();
+});
+$("setup-back").addEventListener("click", () => {
+    show("front");
+    $("continue").focus();
+});
+$("exit").addEventListener("click", exitGame);
+$("reopen").addEventListener("click", () => {
+    show("front");
+    $("continue").focus();
+});
+for (const button of document.querySelectorAll(".settings-open")) button.addEventListener("click", openSettings);
+$("settings-close").addEventListener("click", () => settingsDialog.close());
+settingsDialog.addEventListener("close", clearInput);
+$("settings-reset").addEventListener("click", () => {
+    Object.assign(settings, defaultPreferences);
+    clearInput();
+    applyPreferences();
+    playSound("parry");
+});
+for (const button of settingsDialog.querySelectorAll("[data-volume]")) {
+    button.addEventListener("click", () => {
+        prepareAudio();
+        const key = button.dataset.volume === "master" ? "masterVolume" : "effectsVolume";
+        settings[key] = clampInteger(settings[key] + Number(button.dataset.delta), 0, 100, 0);
+        applyPreferences();
+        playSound("parry");
+    });
+}
+$("screen-shake").addEventListener("click", () => {
+    settings.screenShake = !settings.screenShake;
+    applyPreferences();
+});
+$("show-fps").addEventListener("click", () => {
+    settings.showFps = !settings.showFps;
+    applyPreferences();
+});
+$("fullscreen").addEventListener("click", toggleFullscreen);
+document.addEventListener("fullscreenchange", () => {
+    const fullscreen = Boolean(document.fullscreenElement);
+    if (wasFullscreen && !fullscreen && !fullscreenChanging && performance.now() - lastEscape > 250) {
+        openSettings();
+    }
+    wasFullscreen = fullscreen;
+    renderPreferences();
+});
 for (const button of $("controls").querySelectorAll("button")) {
     button.addEventListener("click", () => {
         settings.controls = button.dataset.controls;
-        saveSettings();
-        renderBindings();
+        clearInput();
+        applyPreferences();
     });
 }
 
@@ -593,6 +806,15 @@ window.addEventListener("mouseup", event => {
     if (event.button === 2) rightMouse = false;
 });
 window.addEventListener("keydown", event => {
+    if (event.key === "Escape" && screen !== "exited") {
+        event.preventDefault();
+        if (!event.repeat) {
+            lastEscape = performance.now();
+            toggleSettings();
+        }
+        return;
+    }
+    if (settingsDialog.open) return;
     if (screen !== "game") return;
     const digit = /^(?:Digit|Numpad)([1-3])$/.exec(event.code);
     if (digit && !$("augment-dialog").hidden && !event.repeat) {
@@ -609,8 +831,11 @@ window.addEventListener("keydown", event => {
 });
 window.addEventListener("keyup", event => keys.delete(event.code));
 window.addEventListener("blur", clearInput);
-window.addEventListener("pagehide", leaveRoom);
+window.addEventListener("pagehide", () => {
+    if (session) leaveRoom();
+});
 new ResizeObserver(resizeCanvas).observe(canvas);
 renderSettings();
+renderPreferences();
 setInterval(tickSession, 1000 / 60);
 requestAnimationFrame(render);

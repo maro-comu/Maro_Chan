@@ -346,7 +346,8 @@ export class Arena {
 
     shoot(actor, slot) {
         const perk = id => actor.perks.has(id);
-        const charged = perk(18) && ++actor.shots % 3 === 0;
+        actor.shots++;
+        const charged = perk(18) && actor.shots % 3 === 0;
         const first = perk(30) && this.elapsed - actor.lastShot >= 1.5;
         const damage = actor.damage * (charged ? 1.55 : 1) * (first ? 1.45 : 1) * (1 + actor.boost);
         actor.boost = 0;
@@ -534,8 +535,8 @@ export class Arena {
     }
 
     snapshot() {
-        const actors = this.actors.map(({ position, facing, team, level, kills, hp, maxHp, radius, parryTime, guarding }) =>
-            ({ position, facing, team, level, kills, hp, maxHp, radius, parryTime, guarding }));
+        const actors = this.actors.map(({ position, facing, team, level, kills, hp, maxHp, radius, parryTime, guarding, shots }) =>
+            ({ position, facing, team, level, kills, hp, maxHp, radius, parryTime, guarding, shots }));
         const bullets = this.bullets.map(({ position, velocity, team, radius, explosive }) =>
             ({ position, velocity, team, radius, explosive }));
         const choices = this.actors.map(actor => actor.pending?.map(id => {
