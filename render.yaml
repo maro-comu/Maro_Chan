@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: maro-chan-relay
+    runtime: node
+    plan: free
+    region: singapore
+    rootDir: Server
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /health
+    numInstances: 1
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_VERSION
+        value: 24.22.1

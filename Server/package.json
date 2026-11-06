@@ -1,0 +1,16 @@
+{
+  "name": "maro-chan-native-relay",
+  "version": "0.0.7",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "start": "node Relay_Maro.js",
+    "test": "node --test RelayTest_Maro.js"
+  },
+  "dependencies": {
+    "ws": "8.22.1"
+  }
+}
