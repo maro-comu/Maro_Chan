@@ -26,6 +26,7 @@ add_executable(MaroArena WIN32
     "${MARO_SOURCE_DIR}/Source/Arena_Maro.cpp"
     "${MARO_SOURCE_DIR}/Source/Battle_Maro.cpp"
     "${MARO_SOURCE_DIR}/Source/Lan_Maro.cpp"
+    "${MARO_SOURCE_DIR}/Source/Presentation_Maro.cpp"
     "${MARO_SOURCE_DIR}/Source/Menu_Maro.cpp"
     "${MARO_SOURCE_DIR}/Source/Settings_Maro.cpp"
     "${MARO_SOURCE_DIR}/Source/Ui_Maro.cpp"

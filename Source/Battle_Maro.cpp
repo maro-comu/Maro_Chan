@@ -3,6 +3,7 @@
 #include "Arena_Maro.h"
 #include "Lan_Maro.h"
 #include "Menu_Maro.h"
+#include "Presentation_Maro.h"
 #include "Settings_Maro.h"
 #include "Ui_Maro.h"
 #include "cocos2d.h"
@@ -92,6 +93,17 @@ public:
         if (FAILED(engine_->CreateMasteringVoice(&output_))) {
             engine_->Release();
             engine_ = nullptr;
+            return;
+        }
+        constexpr std::array<const char*, 3> Paths{"hit_Maro.wav", "parry_Maro.wav", "blast_Maro.wav"};
+        const WAVEFORMATEX format{WAVE_FORMAT_PCM, 1, 22050, 44100, 2, 16, 0};
+        for (std::size_t i = 0; i < effects_.size(); ++i) {
+            auto& effect = effects_[i];
+            effect.data = cocos2d::FileUtils::getInstance()->getDataFromFile(Paths[i]);
+            if (effect.data.getSize() > WaveHeaderSize
+                && std::memcmp(effect.data.getBytes() + 36, "data", 4) == 0) {
+                engine_->CreateSourceVoice(&effect.voice, &format);
+            }
         }
     }
 
@@ -111,19 +123,10 @@ public:
         if (!output_) {
             return;
         }
-        constexpr std::array<const char*, 3> Paths{"hit_Maro.wav", "parry_Maro.wav", "blast_Maro.wav"};
         const auto index = static_cast<std::size_t>(sound);
         auto& effect = effects_[index];
         if (!effect.voice) {
-            effect.data = cocos2d::FileUtils::getInstance()->getDataFromFile(Paths[index]);
-            if (effect.data.getSize() <= WaveHeaderSize
-                || std::memcmp(effect.data.getBytes() + 36, "data", 4) != 0) {
-                return;
-            }
-            const WAVEFORMATEX format{WAVE_FORMAT_PCM, 1, 22050, 44100, 2, 16, 0};
-            if (FAILED(engine_->CreateSourceVoice(&effect.voice, &format))) {
-                return;
-            }
+            return;
         }
         XAUDIO2_BUFFER buffer{};
         buffer.Flags = XAUDIO2_END_OF_STREAM;
@@ -177,6 +180,7 @@ private:
     Input battleInput();
     void stepHost(float dt);
     void collectFrame();
+    void updatePresentation(float dt);
     void drawWorld();
     void drawFighter(const Actor& actor, std::size_t index);
     void drawHud();
@@ -200,6 +204,8 @@ private:
     std::unique_ptr<BattleAudio> audio_;
     std::unique_ptr<Arena> arena_;
     MatchFrame hostFrame_;
+    FramePresenter presenter_;
+    std::uint64_t receivedRevision_ = 0;
     Node* field_ = nullptr;
     Node* overlayNode_ = nullptr;
     Node* mainMenu_ = nullptr;
@@ -228,6 +234,7 @@ private:
     float previousParry_ = 0.0f;
     float previousBlast_ = 0.0f;
     float endedBehindMain_ = 0.0f;
+    float hudTimer_ = 0.0f;
     bool haveDestination_ = false;
     bool haveAim_ = false;
     bool frameDirty_ = false;
@@ -257,6 +264,7 @@ bool BattleScene::initBattle() {
     ui::panel(this, {0, 0, 1280, 800}, tint(ui::Background));
     makeField();
     makeHud();
+    audio_ = std::make_unique<BattleAudio>();
     listen();
     updateOverlay();
     drawWorld();
@@ -484,7 +492,19 @@ void BattleScene::stepHost(float dt) {
     if (frameDirty_ && publishTimer_ <= 0) {
         session_->publish(hostFrame_);
         frameDirty_ = false;
-        publishTimer_ = 1.0f / 30;
+        publishTimer_ = std::max(0.0f, publishTimer_ + 1.0f / 30.0f);
+    }
+}
+
+void BattleScene::updatePresentation(float dt) {
+    if (arena_) {
+        return;
+    }
+    presenter_.advance(dt);
+    const auto revision = session_->frameRevision();
+    if (revision != receivedRevision_) {
+        presenter_.push(session_->frame());
+        receivedRevision_ = revision;
     }
 }
 
@@ -512,7 +532,13 @@ void BattleScene::drawFighter(const Actor& actor, std::size_t index) {
     }
 
     const auto center = point(actor.position);
-    const auto facing = point(actor.facing);
+    auto facing = point(actor.facing);
+    if (static_cast<int>(index) == session_->localSlot() && acceptingInput() && haveAim_) {
+        const auto aimDirection = point(aim_) - center;
+        if (aimDirection.lengthSquared() > 0.001f) {
+            facing = aimDirection.getNormalized();
+        }
+    }
     const auto color = ui::teamColor(actor.team);
     const auto angle = std::atan2(facing.y, facing.x);
     if (sprite) {
@@ -547,7 +573,7 @@ void BattleScene::drawFighter(const Actor& actor, std::size_t index) {
 
 void BattleScene::drawWorld() {
     combat_->clear();
-    const auto& frame = world();
+    const auto& frame = arena_ ? hostFrame_ : presenter_.frame();
     const auto& actors = frame.actors;
     const auto* local = player();
     you_->setVisible(local && local->alive());
@@ -899,8 +925,15 @@ void BattleScene::update(float dt) {
     updateOverlay();
     updateCursor();
     updateFeedback(dt);
-    drawWorld();
-    drawHud();
+    updatePresentation(dt);
+    if (!mainMenu_) {
+        drawWorld();
+        hudTimer_ -= dt;
+        if (hudTimer_ <= 0.0f) {
+            drawHud();
+            hudTimer_ = 0.1f;
+        }
+    }
 }
 
 }

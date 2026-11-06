@@ -350,6 +350,7 @@ void Arena::shoot(int index, bool stationary) {
     for (int pellet = -spread; pellet <= spread && bullets_.size() < BulletLimit; ++pellet) {
         const auto angle = static_cast<float>(pellet) * 0.09f;
         bullet.velocity = (actor.facing * std::cos(angle) + side * std::sin(angle)) * speed;
+        bullet.id = nextBulletId_++;
         bullets_.push_back(bullet);
     }
     const bool steady = stationary && (fighter.perks & upgradeBit(Upgrade::SteadyAim));
@@ -371,6 +372,7 @@ void Arena::emitFragments(int index) {
     for (int ray = 0; ray < 8 && bullets_.size() < BulletLimit; ++ray) {
         const auto angle = static_cast<float>(ray) * 0.785398163f;
         fragment.velocity = Vec{std::cos(angle), std::sin(angle)} * 490.0f;
+        fragment.id = nextBulletId_++;
         bullets_.push_back(fragment);
     }
 }
@@ -435,6 +437,7 @@ void Arena::advanceBullets(float dt) {
                     for (const float sign : {-1.0f, 1.0f}) {
                         if (parryFragments.size() < BulletLimit) {
                             fragment.velocity = forward + side * sign;
+                            fragment.id = nextBulletId_++;
                             parryFragments.push_back(fragment);
                         }
                     }

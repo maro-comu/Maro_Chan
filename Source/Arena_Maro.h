@@ -55,6 +55,7 @@ struct Bullet {
     int team = 0;
     float radius = 4.0f;
     std::uint8_t effects = 0;
+    std::uint32_t id = 0;
 
 private:
     friend class Arena;
@@ -176,6 +177,7 @@ private:
     float elapsed_ = 0.0f;
     float accumulator_ = 0.0f;
     int pendingAugments_ = 0;
+    std::uint32_t nextBulletId_ = 1;
 };
 
 }

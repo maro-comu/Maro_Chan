@@ -48,6 +48,7 @@ public:
     std::vector<int> takeDepartures();
     void publish(const MatchFrame& frame);
     const MatchFrame& frame() const;
+    std::uint64_t frameRevision() const;
 
 private:
     struct Impl;

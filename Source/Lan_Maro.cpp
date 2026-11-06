@@ -26,7 +26,7 @@ constexpr std::size_t PacketLimit = 65536;
 constexpr std::size_t SendLimit = 4 * PacketLimit;
 constexpr int SlotLimit = 16;
 constexpr auto Timeout = std::chrono::seconds(8);
-constexpr std::uint32_t Protocol = 0x024F524D;
+constexpr std::uint32_t Protocol = 0x034F524D;
 
 enum class Kind : Byte { Hello = 1, Lobby, Start, Input, Choice, Frame, Reject };
 enum class Rejection : Byte { Full = 1, Started, Version };
@@ -107,7 +107,10 @@ std::uint32_t readWord(const Byte* bytes) {
 
 class Writer {
 public:
-    explicit Writer(Kind kind) : bytes_(HeaderSize, 0) { byte(static_cast<Byte>(kind)); }
+    explicit Writer(Kind kind, std::size_t capacity = 64) : bytes_(HeaderSize, 0) {
+        bytes_.reserve(capacity);
+        byte(static_cast<Byte>(kind));
+    }
 
     void byte(Byte value) { bytes_.push_back(value); }
 
@@ -304,7 +307,8 @@ bool readInput(Reader& reader, Input& input) {
 }
 
 Packet writeFrame(const MatchFrame& frame) {
-    Writer writer(Kind::Frame);
+    Writer writer(Kind::Frame, 64 + frame.actors.size() * 50
+        + frame.bullets.size() * 26 + frame.blasts.size() * 17);
     writer.number(frame.elapsed);
     writer.byte(static_cast<Byte>(frame.result));
     writer.byte(static_cast<Byte>(frame.winner + 1));
@@ -337,6 +341,7 @@ Packet writeFrame(const MatchFrame& frame) {
         writer.number(bullet.radius);
         writer.byte(static_cast<Byte>(bullet.team));
         writer.byte(bullet.effects);
+        writer.word(bullet.id);
     }
     const auto blastCount = std::min(frame.blasts.size(), Arena::BlastLimit);
     writer.byte(static_cast<Byte>(blastCount));
@@ -404,16 +409,19 @@ bool readFrame(Reader& reader, const MatchConfig& config, MatchFrame& frame) {
         return false;
     }
     frame.bullets.resize(bullets);
+    std::uint32_t previousBulletId = 0;
     for (auto& bullet : frame.bullets) {
         bullet.position = reader.point();
         bullet.velocity = reader.point();
         bullet.radius = reader.number();
         bullet.team = reader.byte();
         bullet.effects = reader.byte();
+        bullet.id = reader.word();
         if (bullet.team >= config.teams || bullet.radius <= 0 || !validPoint(bullet.position, 4096.0f)
-            || !validPoint(bullet.velocity, 4096.0f) || bullet.effects > 31) {
+            || !validPoint(bullet.velocity, 4096.0f) || bullet.effects > 31 || bullet.id <= previousBulletId) {
             return false;
         }
+        previousBulletId = bullet.id;
     }
     const auto blasts = reader.byte();
     if (blasts > Arena::BlastLimit) {
@@ -451,6 +459,8 @@ struct LanSession::Impl {
     std::vector<Peer> clients;
     MatchConfig config;
     MatchFrame frame;
+    MatchFrame pendingFrame;
+    std::uint64_t revision = 0;
     std::vector<Input> inputs;
     std::vector<std::pair<int, int>> choices;
     std::vector<int> departures;
@@ -767,11 +777,11 @@ bool LanSession::Impl::fromHost(Kind kind, Reader& reader) {
         return true;
     }
     if (kind == Kind::Frame && started) {
-        MatchFrame received;
-        if (!readFrame(reader, config, received)) {
+        if (!readFrame(reader, config, pendingFrame)) {
             return false;
         }
-        frame = std::move(received);
+        std::swap(frame, pendingFrame);
+        ++revision;
         return true;
     }
     return false;
@@ -811,6 +821,7 @@ const std::string& LanSession::error() const { return impl_->error; }
 int LanSession::localSlot() const { return impl_->slot; }
 const MatchConfig& LanSession::config() const { return impl_->config; }
 const MatchFrame& LanSession::frame() const { return impl_->frame; }
+std::uint64_t LanSession::frameRevision() const { return impl_->revision; }
 
 std::array<bool, SlotLimit> LanSession::occupiedSlots() const {
     std::array<bool, SlotLimit> occupied{};
@@ -886,6 +897,7 @@ void LanSession::publish(const MatchFrame& frame) {
         return;
     }
     impl_->frame = frame;
+    ++impl_->revision;
     const auto packet = writeFrame(frame);
     for (auto& peer : impl_->clients) {
         if (peer.slot >= 0 && peer.socket.open() && peer.queue(packet, true) && !peer.flush()) {
