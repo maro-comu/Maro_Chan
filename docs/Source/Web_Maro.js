@@ -37,7 +37,7 @@ for (let y = 56; y < height; y += 56) {
 }
 
 const settings = readSettings();
-let screen = "front";
+let screen = "setup";
 let session = null;
 let arena = null;
 let frame = null;
@@ -196,6 +196,7 @@ function renderPreferences() {
     $("fullscreen").disabled = !document.fullscreenEnabled;
     $("fps-counter").hidden = !settings.showFps;
     $("game-leave").hidden = screen !== "game";
+    $("game-main").hidden = screen !== "game" || !canResume();
 }
 
 function applyPreferences() {
@@ -291,8 +292,21 @@ function updateFeedback(now) {
 
 function show(next) {
     screen = next;
-    for (const id of ["front", "setup", "lobby", "game", "exited"]) $(id).hidden = id !== next;
+    for (const id of ["setup", "lobby", "game", "exited"]) $(id).hidden = id !== next;
+    if (screen === "setup") renderMain();
     if (settingsDialog.open) renderPreferences();
+}
+
+function canResume() {
+    return Boolean(session?.started && session.connected && !session.error && (!frame || frame.result === "playing"));
+}
+
+function renderMain() {
+    const resumable = canResume();
+    $("continue").hidden = !resumable;
+    $("suspended-leave").hidden = !resumable;
+    $("host").disabled = resumable;
+    for (const control of $("join-form").elements) control.disabled = resumable;
 }
 
 function setupError(message) {
@@ -302,6 +316,9 @@ function setupError(message) {
 }
 
 function openRoom(create) {
+    if (canResume()) return;
+    if (session) leaveRoom();
+    prepareAudio();
     setupError("");
     try {
         session = create();
@@ -331,6 +348,7 @@ function leaveRoom() {
 }
 
 function exitGame() {
+    if (session) leaveRoom();
     if (document.fullscreenElement) {
         fullscreenChanging = true;
         document.exitFullscreen().catch(() => {}).finally(() => { fullscreenChanging = false; });
@@ -338,6 +356,32 @@ function exitGame() {
     show("exited");
     $("reopen").focus();
     if (window.opener || history.length === 1) window.close();
+}
+
+function returnToMain() {
+    if (!canResume()) {
+        leaveRoom();
+        return;
+    }
+    settingsDialog.close();
+    clearInput();
+    pointer.inside = false;
+    show("setup");
+    $("continue").focus();
+}
+
+function resumeGame() {
+    if (!canResume()) {
+        renderMain();
+        return;
+    }
+    prepareAudio();
+    feedback = null;
+    shakeUntil = 0;
+    fpsStarted = fpsFrames = 0;
+    show("game");
+    resizeCanvas();
+    renderHud();
 }
 
 function renderLobby() {
@@ -463,7 +507,7 @@ function tickSession() {
         }
         return;
     }
-    if (screen !== "game") return;
+    if (screen !== "game" && (screen !== "setup" || !session.started)) return;
 
     if (arena && !session.error) {
         for (const slot of session.takeDepartures()) arena.removePlayer(slot);
@@ -486,8 +530,13 @@ function tickSession() {
         }
     }
     previousTick = now;
-    updateFeedback(now);
-    renderHud();
+    if (screen === "game") {
+        $("game-main").hidden = !canResume();
+        updateFeedback(now);
+        renderHud();
+    } else {
+        renderMain();
+    }
 }
 
 function clockText(elapsed) {
@@ -723,20 +772,15 @@ $("join-form").addEventListener("submit", event => {
 });
 $("copy-room").addEventListener("click", copyRoomCode);
 $("start").addEventListener("click", () => session?.start());
-for (const id of ["lobby-leave", "game-leave", "message-leave"]) $(id).addEventListener("click", leaveRoom);
-$("continue").addEventListener("click", () => {
-    prepareAudio();
-    show("setup");
-    $("host").focus();
-});
-$("setup-back").addEventListener("click", () => {
-    show("front");
-    $("continue").focus();
-});
+for (const id of ["lobby-leave", "game-leave", "message-leave", "suspended-leave"]) {
+    $(id).addEventListener("click", leaveRoom);
+}
+$("continue").addEventListener("click", resumeGame);
+$("game-main").addEventListener("click", returnToMain);
 $("exit").addEventListener("click", exitGame);
 $("reopen").addEventListener("click", () => {
-    show("front");
-    $("continue").focus();
+    show("setup");
+    $("host").focus();
 });
 for (const button of document.querySelectorAll(".settings-open")) button.addEventListener("click", openSettings);
 $("settings-close").addEventListener("click", () => settingsDialog.close());
@@ -836,6 +880,7 @@ window.addEventListener("pagehide", () => {
 });
 new ResizeObserver(resizeCanvas).observe(canvas);
 renderSettings();
+renderMain();
 renderPreferences();
 setInterval(tickSession, 1000 / 60);
 requestAnimationFrame(render);

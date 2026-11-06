@@ -42,11 +42,9 @@ button.primary, button[data-active="true"] { background: var(--accent); color: v
 button:disabled { opacity: .42; cursor: default; }
 kbd { color: var(--muted); font-family: inherit; font-size: 12px; font-weight: 500; }
 
-.front-screen { display: grid; min-height: calc(100dvh - 72px); align-items: center; justify-items: center; }
-.front-content { width: min(100%, 440px); text-align: center; }
-.front-content h1 { margin-bottom: 36px; }
-.front-actions { display: grid; gap: 8px; width: min(100%, 300px); margin-inline: auto; }
-.front-actions button { min-height: 48px; }
+.exit-screen { display: grid; min-height: calc(100dvh - 72px); place-items: center; }
+.exit-content { text-align: center; }
+.exit-content button { min-height: 48px; min-width: 160px; }
 
 .setup-grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 16px; align-items: start; }
 .setup-grid > .settings { display: flex; flex-direction: column; }
@@ -162,13 +160,15 @@ progress::-moz-progress-bar { background: var(--accent); }
 #settings-status { margin-top: 12px; font-size: 14px; }
 #settings-status:empty { display: none; }
 .settings-actions { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; margin-top: 18px; }
+.settings-actions .actions { flex-wrap: wrap; }
+.settings-actions .actions:not(:has(> button:not([hidden]))) { display: none; }
 .danger { color: var(--error); }
 .danger:hover:not(:disabled) { border-color: var(--error); }
 
 @media (max-width: 740px) {
     main { width: calc(100% - 24px); padding: 20px 0; }
     h1 { margin-bottom: 16px; }
-    .front-screen { min-height: calc(100dvh - 40px); }
+    .exit-screen { min-height: calc(100dvh - 40px); }
     .setup-grid { grid-template-columns: 1fr; }
     .settings, .room-bar { padding: 15px; }
     .game-header > button, .section-header .actions button { min-height: 34px; font-size: 13px; padding: 5px 7px; }
