@@ -139,6 +139,19 @@ test('방장이 종료하면 모든 참가자를 종료하고 방 코드를 폐�
   assert.equal((await orphan.next())[0], 5);
 });
 
+test('명시적으로 방을 나가거나 닫으면 상대에게 바로 알린다', async (t) => {
+  const { room, guest, connect } = await setup(t);
+  const { host, code } = await room();
+  const leaving = await guest(host, code);
+  leaving.ws.send(frame(4, leaving.id));
+  assert.deepEqual(await host.next(), frame(4, leaving.id));
+  const remaining = await guest(host, code);
+  host.ws.send(frame(4, 0));
+  assert.deepEqual(await remaining.next(), frame(4, remaining.id));
+  const closed = await connect(`/join/${code}`);
+  assert.equal((await closed.next())[0], 5);
+});
+
 test('존재하지 않는 방과 잘못된 패킷에 오류를 반환한다', async (t) => {
   const { room, connect } = await setup(t);
   const missing = await connect('/join/AAAAAAAA');

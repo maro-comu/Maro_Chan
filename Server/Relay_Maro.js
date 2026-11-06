@@ -118,6 +118,10 @@ export function createRelay({ heartbeatMs = 20000 } = {}) {
     if (type === 3 && data.length > 5) {
       if (peer) send(peer, data);
     } else if (type === 4 && data.length === 5) {
+      if (client.host && id === 0) {
+        disconnect(client);
+        return;
+      }
       const guest = client.host ? peer : client;
       if (guest) {
         send(guest, peerFrame(4, guest.id));
