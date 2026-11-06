@@ -292,7 +292,9 @@ function updateFeedback(now) {
 
 function show(next) {
     screen = next;
-    for (const id of ["setup", "lobby", "game", "exited"]) $(id).hidden = id !== next;
+    $("setup").hidden = next !== "setup" && next !== "lobby";
+    $("room-setup").hidden = next !== "setup";
+    for (const id of ["lobby", "game", "exited"]) $(id).hidden = id !== next;
     if (screen === "setup") renderMain();
     if (settingsDialog.open) renderPreferences();
 }
@@ -334,6 +336,7 @@ function openRoom(create) {
     $("copy-room").textContent = "코드 복사";
     show("lobby");
     renderLobby();
+    $("lobby").focus();
 }
 
 function leaveRoom() {
@@ -414,7 +417,7 @@ function renderLobby() {
             row.append(element("span", `${seat + 1}번`), element("span", state, occupiedSlots[slot] ? "accent" : "muted"));
             list.append(row);
         }
-        card.append(element("h2", `${team + 1}팀`), list);
+        card.append(element("h3", `${team + 1}팀`), list);
         return card;
     }) : [];
     $("lobby-teams").replaceChildren(...teams);

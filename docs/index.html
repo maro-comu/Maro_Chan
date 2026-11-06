@@ -4,8 +4,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>멀티 사격 게임</title>
-    <link rel="stylesheet" href="./Assets/Style_Maro.css">
-    <script type="module" src="./Source/Web_Maro.js"></script>
+    <link rel="stylesheet" href="./Assets/Style_Maro.css?v=0.0.5">
+    <script type="module" src="./Source/Web_Maro.js?v=0.0.5"></script>
 </head>
 <body>
     <main>
@@ -19,60 +19,59 @@
                     <button id="exit" type="button">나가기</button>
                 </div>
             </header>
-            <div class="setup-grid">
-                <section class="surface settings">
-                    <h2>경기 설정</h2>
-                    <div class="setting-line">
-                        <span>기본 구성</span>
-                        <div id="presets" class="options"></div>
-                    </div>
-                    <div class="setting-line">
-                        <span>팀 수</span>
-                        <div id="team-count" class="options"></div>
-                    </div>
-                    <div id="team-sizes" class="team-sizes"></div>
-                    <div class="actions host-actions">
-                        <strong id="format"></strong>
-                        <button id="host" class="primary" type="button">방 만들기</button>
-                    </div>
-                </section>
-                <section class="surface settings">
-                    <h2>방 참여</h2>
-                    <form id="join-form">
-                        <label for="join-code">방 코드</label>
-                        <div class="actions">
-                            <input id="join-code" name="code" required maxlength="14" autocomplete="off" autocapitalize="characters" spellcheck="false">
-                            <button class="primary" type="submit">참여</button>
+            <section aria-labelledby="preparation-title">
+                <h2 id="preparation-title" class="preparation-title">경기 준비</h2>
+                <div id="room-setup" class="setup-grid">
+                    <section class="surface settings">
+                        <h3>방 만들기</h3>
+                        <div class="setting-line">
+                            <span>기본 구성</span>
+                            <div id="presets" class="options"></div>
                         </div>
-                    </form>
-                </section>
-            </div>
-            <p id="setup-error" class="error" role="alert" hidden></p>
-        </section>
+                        <div class="setting-line">
+                            <span>팀 수</span>
+                            <div id="team-count" class="options"></div>
+                        </div>
+                        <div id="team-sizes" class="team-sizes"></div>
+                        <div class="actions host-actions">
+                            <strong id="format"></strong>
+                            <button id="host" class="primary" type="button">방 만들기</button>
+                        </div>
+                    </section>
+                    <section class="surface settings">
+                        <h3>방 참여</h3>
+                        <form id="join-form">
+                            <label for="join-code">방 코드</label>
+                            <div class="actions">
+                                <input id="join-code" name="code" required maxlength="14" autocomplete="off" autocapitalize="characters" spellcheck="false">
+                                <button class="primary" type="submit">참여</button>
+                            </div>
+                        </form>
+                    </section>
+                </div>
+                <p id="setup-error" class="error" role="alert" hidden></p>
 
-        <section id="lobby" hidden>
-            <header class="section-header">
-                <h1>경기 대기실</h1>
-                <div class="actions">
-                    <button class="settings-open" type="button">설정 <kbd>Esc</kbd></button>
-                    <button id="lobby-leave" type="button">나가기</button>
+                <div id="lobby" tabindex="-1" hidden>
+                    <div class="surface room-bar">
+                        <div class="room-code-box">
+                            <span>방 코드</span>
+                            <output id="room-code"></output>
+                        </div>
+                        <div class="actions">
+                            <button id="copy-room" type="button" hidden>코드 복사</button>
+                            <button id="lobby-leave" type="button">방 나가기</button>
+                        </div>
+                    </div>
+                    <div id="lobby-teams" class="lobby-grid"></div>
+                    <div class="surface room-bar">
+                        <div>
+                            <strong id="room-count"></strong>
+                            <p id="room-status" class="muted" role="status"></p>
+                        </div>
+                        <button id="start" class="primary" type="button" disabled>경기 시작</button>
+                    </div>
                 </div>
-            </header>
-            <div class="surface room-bar">
-                <div class="room-code-box">
-                    <span>방 코드</span>
-                    <output id="room-code"></output>
-                </div>
-                <button id="copy-room" type="button" hidden>코드 복사</button>
-            </div>
-            <div id="lobby-teams" class="lobby-grid"></div>
-            <div class="surface room-bar">
-                <div>
-                    <strong id="room-count"></strong>
-                    <p id="room-status" class="muted" role="status"></p>
-                </div>
-                <button id="start" class="primary" type="button" disabled>경기 시작</button>
-            </div>
+            </section>
         </section>
 
         <section id="game" hidden>
