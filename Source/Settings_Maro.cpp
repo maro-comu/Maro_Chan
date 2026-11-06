@@ -34,7 +34,7 @@ class SettingsOverlay final : public Node {
 public:
     bool initOverlay(const Settings& settings, std::function<void(const Settings&)> onChange,
                      std::function<void()> onClose, std::function<void()> onLeave,
-                     const std::string& leaveLabel) {
+                     const std::string& leaveLabel, std::function<void()> onMain) {
         if (!Node::init()) {
             return false;
         }
@@ -56,9 +56,14 @@ public:
             settings_ = Settings{};
             changed();
         }, false, 16);
+        const bool bothActions = onLeave && onMain;
         if (onLeave) {
-            ui::button(buttons, leaveLabel.empty() ? "나가기" : leaveLabel, {598, 148}, {200, 42},
+            ui::button(buttons, leaveLabel.empty() ? "나가기" : leaveLabel, {bothActions ? 702.0f : 598.0f, 148}, {192, 42},
                 std::move(onLeave), false, 16);
+        }
+        if (onMain) {
+            ui::button(buttons, "메인으로", {bothActions ? 522.0f : 598.0f, 148}, {142, 42},
+                std::move(onMain), false, 16);
         }
         if (onClose) {
             ui::button(buttons, "계속하기  /  ESC", {920, 148}, {208, 42}, std::move(onClose), true, 16);
@@ -206,10 +211,10 @@ void saveSettings(const Settings& settings) {
 
 cocos2d::Node* createSettingsOverlay(const Settings& settings,
     std::function<void(const Settings&)> onChange, std::function<void()> onClose,
-    std::function<void()> onLeave, const std::string& leaveLabel) {
+    std::function<void()> onLeave, const std::string& leaveLabel, std::function<void()> onMain) {
     auto* overlay = new (std::nothrow) SettingsOverlay;
     if (overlay && overlay->initOverlay(settings, std::move(onChange), std::move(onClose),
-        std::move(onLeave), leaveLabel)) {
+        std::move(onLeave), leaveLabel, std::move(onMain))) {
         overlay->autorelease();
         return overlay;
     }

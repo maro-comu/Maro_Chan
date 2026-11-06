@@ -119,7 +119,7 @@ public:
         const auto resourceRoot = std::filesystem::u8path(files->getDefaultResourceRootPath());
         const auto assets = (resourceRoot / "../Assets").lexically_normal();
         files->addSearchPath(assets.generic_u8string(), true);
-        director->runWithScene(maro::createStartScene());
+        director->runWithScene(maro::createMenuScene());
         return true;
     }
 

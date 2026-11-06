@@ -25,6 +25,7 @@ void saveSettings(const Settings& settings);
 void setGameFullscreen(bool fullscreen);
 cocos2d::Node* createSettingsOverlay(const Settings& settings,
     std::function<void(const Settings&)> onChange, std::function<void()> onClose,
-    std::function<void()> onLeave = {}, const std::string& leaveLabel = {});
+    std::function<void()> onLeave = {}, const std::string& leaveLabel = {},
+    std::function<void()> onMain = {});
 
 }

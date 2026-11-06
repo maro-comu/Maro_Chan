@@ -184,6 +184,9 @@ private:
     void updateOverlay();
     void showAugments(Menu* buttons);
     void showSettings();
+    void openMainMenu();
+    void resumeFromMain();
+    bool canResume() const;
     void showResult(Menu* buttons);
     void showStatus(Menu* buttons, const std::string& title, const std::string& detail, bool canLeave);
     void choose(int index);
@@ -199,6 +202,7 @@ private:
     MatchFrame hostFrame_;
     Node* field_ = nullptr;
     Node* overlayNode_ = nullptr;
+    Node* mainMenu_ = nullptr;
     DrawNode* combat_ = nullptr;
     DrawNode* meters_ = nullptr;
     Menu* topMenu_ = nullptr;
@@ -223,6 +227,7 @@ private:
     float previousHp_ = -1.0f;
     float previousParry_ = 0.0f;
     float previousBlast_ = 0.0f;
+    float endedBehindMain_ = 0.0f;
     bool haveDestination_ = false;
     bool haveAim_ = false;
     bool frameDirty_ = false;
@@ -316,7 +321,7 @@ void BattleScene::makeHud() {
 void BattleScene::listen() {
     auto* keys = cocos2d::EventListenerKeyboard::create();
     keys->onKeyPressed = [this](Key key, cocos2d::Event*) {
-        if (!handleShortcut(key)) {
+        if (!mainMenu_ && !handleShortcut(key)) {
             setKey(key, true);
         }
     };
@@ -370,6 +375,9 @@ void BattleScene::setKey(Key key, bool down) {
 }
 
 void BattleScene::moveCursor(cocos2d::EventMouse* event) {
+    if (mainMenu_) {
+        return;
+    }
     pointer_ = {event->getCursorX(), event->getCursorY()};
     if (FieldRect.containsPoint(pointer_)) {
         const auto offset = pointer_ - FieldOrigin;
@@ -429,7 +437,7 @@ const Actor* BattleScene::player() const {
 
 bool BattleScene::acceptingInput() const {
     const auto* actor = player();
-    return overlay_ == Overlay::None && actor && actor->alive();
+    return !mainMenu_ && overlay_ == Overlay::None && actor && actor->alive();
 }
 
 Input BattleScene::battleInput() {
@@ -579,7 +587,7 @@ void BattleScene::drawWorld() {
 
 void BattleScene::playEffect(Sound sound, float intensity) {
     const float volume = settings_.masterVolume * settings_.effectsVolume * intensity;
-    if (volume > 0.0f) {
+    if (!mainMenu_ && volume > 0.0f) {
         if (!audio_) {
             audio_ = std::make_unique<BattleAudio>();
         }
@@ -699,7 +707,7 @@ void BattleScene::updateOverlay() {
     }
     overlay_ = next;
     offeredLevel_ = offeredLevel;
-    topMenu_->setEnabled(next == Overlay::None);
+    topMenu_->setEnabled(next == Overlay::None && !mainMenu_);
     updateCursor();
     if (next == Overlay::None) {
         return;
@@ -759,6 +767,10 @@ void BattleScene::showAugments(Menu* buttons) {
 }
 
 void BattleScene::showSettings() {
+    std::function<void()> onMain;
+    if (canResume()) {
+        onMain = [this] { openMainMenu(); };
+    }
     overlayNode_ = createSettingsOverlay(settings_, [this](const Settings& settings) {
         const bool fullscreenChanged = settings_.fullscreen != settings.fullscreen;
         settings_ = settings;
@@ -767,10 +779,40 @@ void BattleScene::showSettings() {
         }
     }, [this] { setPaused(false); }, [] {
         cocos2d::Director::getInstance()->replaceScene(createMenuScene());
-    }, session_->hosting() ? "경기 종료" : "경기 나가기");
+    }, session_->hosting() ? "경기 종료" : "경기 나가기", std::move(onMain));
     if (overlayNode_) {
         addChild(overlayNode_, 10);
     }
+}
+
+bool BattleScene::canResume() const {
+    return session_->connected() && world().result == MatchResult::Playing;
+}
+
+void BattleScene::openMainMenu() {
+    if (!canResume() || mainMenu_) {
+        return;
+    }
+    mainMenu_ = createMenuLayer([this] { resumeFromMain(); }, [] {
+        cocos2d::Director::getInstance()->replaceScene(createMenuScene());
+    });
+    if (mainMenu_) {
+        addChild(mainMenu_, 20);
+        topMenu_->setEnabled(false);
+        setPaused(false);
+    }
+}
+
+void BattleScene::resumeFromMain() {
+    if (!canResume()) {
+        cocos2d::Director::getInstance()->replaceScene(createMenuScene());
+        return;
+    }
+    mainMenu_->removeFromParent();
+    mainMenu_ = nullptr;
+    settings_ = loadSettings();
+    topMenu_->setEnabled(overlay_ == Overlay::None);
+    updateCursor();
 }
 
 void BattleScene::showResult(Menu* buttons) {
@@ -845,6 +887,13 @@ void BattleScene::update(float dt) {
     }
     if (const auto* local = player(); local && !local->alive()) {
         clearInput();
+    }
+    if (mainMenu_ && !canResume()) {
+        endedBehindMain_ += dt;
+        if (endedBehindMain_ >= 0.25f) {
+            cocos2d::Director::getInstance()->replaceScene(createMenuScene());
+            return;
+        }
     }
     destinationMarker_ = std::max(0.0f, destinationMarker_ - dt);
     updateOverlay();

@@ -72,27 +72,29 @@ std::string decodeRoomCode(const std::string& code) {
         + "." + std::to_string((value >> 8) & 255) + "." + std::to_string(value & 255);
 }
 
-void buildHeader(Scene* scene, const char* title, const char* caption) {
-    ui::panel(scene, {0, 0, 1280, 800}, Color4F(ui::Background));
-    ui::label(scene, title, 58, {47, 692}, ui::Ink, leftAnchor);
+void buildHeader(Node* view, const char* title, const char* caption) {
+    ui::panel(view, {0, 0, 1280, 800}, Color4F(ui::Background));
+    ui::label(view, title, 58, {47, 692}, ui::Ink, leftAnchor);
     if (caption) {
-        ui::label(scene, caption, 17, {1232, 750}, ui::Muted, rightAnchor);
+        ui::label(view, caption, 17, {1232, 750}, ui::Muted, rightAnchor);
     }
 }
 
-class SettingsScene : public Scene {
+template<class Base>
+class SettingsView : public Base {
 protected:
     bool init() override {
-        if (!Scene::init()) {
+        if (!Base::init()) {
             return false;
         }
         auto* listener = EventListenerKeyboard::create();
-        listener->onKeyPressed = [this](EventKeyboard::KeyCode key, Event*) {
+        listener->onKeyPressed = [this](EventKeyboard::KeyCode key, Event* event) {
             if (key == EventKeyboard::KeyCode::KEY_ESCAPE) {
+                event->stopPropagation();
                 toggleSettings();
             }
         };
-        getEventDispatcher()->addEventListenerWithSceneGraphPriority(listener, this);
+        this->getEventDispatcher()->addEventListenerWithSceneGraphPriority(listener, this);
         return true;
     }
 
@@ -106,7 +108,7 @@ protected:
             [](const Settings& settings) { setGameFullscreen(settings.fullscreen); },
             [this] { toggleSettings(); });
         if (settingsOverlay_) {
-            addChild(settingsOverlay_, 100);
+            this->addChild(settingsOverlay_, 100);
         }
     }
 
@@ -114,34 +116,7 @@ private:
     Node* settingsOverlay_ = nullptr;
 };
 
-class StartScene final : public SettingsScene {
-public:
-    CREATE_FUNC(StartScene);
-
-    bool init() override {
-        if (!SettingsScene::init()) {
-            return false;
-        }
-        ui::panel(this, {0, 0, 1280, 800}, Color4F(ui::Background));
-        ui::panel(this, {292, 148, 696, 504}, Color4F(ui::Surface), Color4F(ui::Border));
-        ui::panel(this, {584, 613, 112, 3}, Color4F(ui::Accent));
-        ui::label(this, "멀티 사격 게임", 63, {640, 540}, ui::Ink);
-        ui::label(this, "팀을 구성하고 친구와 사격 대결을 펼치세요.", 19, {640, 463}, ui::Muted);
-        auto* buttons = ui::menu(this);
-        ui::button(buttons, "계속하기", {640, 363}, {310, 58}, [] {
-            Director::getInstance()->replaceScene(createMenuScene());
-        }, true, 24);
-        ui::button(buttons, "나가기", {640, 286}, {310, 50}, [] {
-            Director::getInstance()->end();
-        }, false, 21);
-        ui::button(buttons, "설정  /  ESC", {640, 200}, {158, 40}, [this] {
-            toggleSettings();
-        }, false, 16);
-        return true;
-    }
-};
-
-class LobbyScene final : public SettingsScene {
+class LobbyScene final : public SettingsView<Scene> {
 public:
     static LobbyScene* create(std::shared_ptr<LanSession> session) {
         auto* lobby = new LobbyScene(std::move(session));
@@ -154,7 +129,7 @@ public:
     }
 
     bool init() override {
-        if (!SettingsScene::init()) {
+        if (!SettingsView::init()) {
             return false;
         }
         buildHeader(this, "경기 대기실", session_->hosting() ? "LAN  /  방장" : "LAN  /  참가자");
@@ -289,20 +264,25 @@ private:
     MenuItemLabel* start_ = nullptr;
 };
 
-class SetupScene final : public SettingsScene {
+class SetupLayer final : public SettingsView<Node> {
 public:
-    CREATE_FUNC(SetupScene);
-
-    bool init() override {
-        if (!SettingsScene::init()) {
+    bool initMenu(std::function<void()> onContinue, std::function<void()> onLeaveMatch) {
+        if (!SettingsView::init()) {
             return false;
+        }
+        canResume_ = static_cast<bool>(onContinue);
+        if (canResume_) {
+            auto* barrier = EventListenerTouchOneByOne::create();
+            barrier->setSwallowTouches(true);
+            barrier->onTouchBegan = [](Touch*, Event*) { return true; };
+            getEventDispatcher()->addEventListenerWithSceneGraphPriority(barrier, this);
         }
         restoreSettings();
 
         buildHeader(this, "멀티 사격 게임", nullptr);
         auto* header = ui::menu(this);
-        ui::button(header, "처음으로", {981, 692}, {146, 42}, [] {
-            Director::getInstance()->replaceScene(createStartScene());
+        ui::button(header, "나가기", {981, 692}, {146, 42}, [] {
+            Director::getInstance()->end();
         }, false, 16);
         ui::button(header, "설정  /  ESC", {1156, 692}, {152, 42}, [this] {
             toggleSettings();
@@ -310,7 +290,7 @@ public:
 
         buildMatchSetup();
         buildRoomPanel();
-        buildSummary();
+        buildSummary(std::move(onContinue), std::move(onLeaveMatch));
         refresh();
         return true;
     }
@@ -375,15 +355,13 @@ private:
 
     void buildRoomPanel() {
         ui::panel(this, {768, 160, 464, 472}, Color4F(ui::Surface), Color4F(ui::Border));
-        ui::label(this, "친구와 경기", 24, {796, 595}, ui::Ink, leftAnchor);
-        ui::label(this, "왼쪽에서 팀을 구성한 뒤 방을 만드세요.", 17, {796, 548}, ui::Muted, leftAnchor);
         auto* buttons = ui::menu(this);
-        ui::button(buttons, "방 만들기", {1000, 486}, {408, 52}, [this] { host(); }, true, 22);
-        ui::panel(this, {796, 423, 408, 1}, Color4F(ui::Border));
-        ui::label(this, "같은 네트워크의 친구 방에 참가하세요.", 17, {796, 378}, ui::Muted, leftAnchor);
-        ui::panel(this, {796, 284, 408, 50}, Color4F(ui::Background), Color4F(ui::Border));
+        auto* create = ui::button(buttons, "방 만들기", {1000, 512}, {408, 56}, [this] { host(); }, !canResume_, 22);
+        create->setEnabled(!canResume_);
+        ui::panel(this, {796, 437, 408, 1}, Color4F(ui::Border));
+        ui::panel(this, {796, 340, 408, 50}, Color4F(ui::Background), Color4F(ui::Border));
         address = cocos2d::ui::EditBox::create({392, 46}, "");
-        address->setPosition({1000, 309});
+        address->setPosition({1000, 365});
         address->setInputMode(cocos2d::ui::EditBox::InputMode::SINGLE_LINE);
         address->setFont("Arial", 19);
         address->setFontColor(ui::Ink);
@@ -392,15 +370,26 @@ private:
         address->setPlaceHolder("방 코드");
         address->setMaxLength(7);
         address->setText(UserDefault::getInstance()->getStringForKey(roomCodeSetting).c_str());
+        address->setEnabled(!canResume_);
         addChild(address);
-        ui::button(buttons, "방 참가", {1000, 238}, {408, 50}, [this] { join(); }, false, 22);
+        auto* joinRoom = ui::button(buttons, "방 참여", {1000, 285}, {408, 50}, [this] { join(); }, false, 22);
+        joinRoom->setEnabled(!canResume_);
     }
 
-    void buildSummary() {
+    void buildSummary(std::function<void()> onContinue, std::function<void()> onLeaveMatch) {
         ui::panel(this, {48, 46, 1184, 88}, Color4F(ui::Surface), Color4F(ui::Border));
         ui::label(this, "방을 만들 때 적용할 구성", 14, {76, 107}, ui::Muted, leftAnchor);
         matchFormat = ui::label(this, " ", 26, {76, 77}, ui::Ink, leftAnchor);
-        notice = ui::label(this, "", 16, {1204, 90}, ui::teamColor(1), rightAnchor);
+        if (canResume_) {
+            ui::label(this, "진행 중인 경기", 17, {678, 90}, ui::Muted, rightAnchor);
+            auto* buttons = ui::menu(this);
+            if (onLeaveMatch) {
+                ui::button(buttons, "경기 나가기", {805, 90}, {188, 50}, std::move(onLeaveMatch), false, 20);
+            }
+            ui::button(buttons, "계속하기", {1064, 90}, {280, 50}, std::move(onContinue), true, 23);
+        } else {
+            notice = ui::label(this, "", 16, {1204, 90}, ui::teamColor(1), rightAnchor);
+        }
     }
 
     void restoreSettings() {
@@ -474,7 +463,6 @@ private:
             }
         }
         matchFormat->setString(format + "   /   " + std::to_string(fighters) + "명");
-
     }
 
     MatchConfig config;
@@ -484,16 +472,29 @@ private:
     Label* matchFormat = nullptr;
     Label* notice = nullptr;
     cocos2d::ui::EditBox* address = nullptr;
+    bool canResume_ = false;
 };
 
 }
 
-cocos2d::Scene* createStartScene() {
-    return StartScene::create();
+cocos2d::Node* createMenuLayer(std::function<void()> onContinue, std::function<void()> onLeaveMatch) {
+    auto* layer = new SetupLayer;
+    if (!layer->initMenu(std::move(onContinue), std::move(onLeaveMatch))) {
+        delete layer;
+        return nullptr;
+    }
+    layer->autorelease();
+    return layer;
 }
 
 cocos2d::Scene* createMenuScene() {
-    return SetupScene::create();
+    auto* scene = Scene::create();
+    if (scene) {
+        if (auto* layer = createMenuLayer({}, {})) {
+            scene->addChild(layer);
+        }
+    }
+    return scene;
 }
 
 }
