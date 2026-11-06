@@ -181,7 +181,7 @@ export class PeerSession {
             if (this.#closed) {
                 return;
             }
-            const config = { appId, password: this.roomCode, passive: !this.hosting };
+            const config = { appId, password: this.roomCode };
             this.#room = joinRoom(config, this.roomCode, {
                 onPeerHandshake: async (_, send, receive, isInitiator) => {
                     const ours = { version, hosting: this.hosting };
@@ -498,6 +498,6 @@ export class PeerSession {
             clearTimeout(record.timer);
         }
         this.#clients.clear();
-        this.#room?.leave();
+        this.#room?.leave().catch(() => {});
     }
 }
